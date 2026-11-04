@@ -975,6 +975,10 @@ async function connect() {
     sessionTicket = login.SessionTicket;
 
     log('PlayFab login successful.');
+    log('DIAG | PlayFab Title ID: ' + title);
+    log('DIAG | Photon Realtime App ID: ' + app);
+    log('DIAG | Photon App Version: ' + appVersion);
+    log('DIAG | Requested region: ' + (selectedRegion || 'Automatic'));
 
     /* GET PHOTON TOKEN */
 
@@ -993,10 +997,12 @@ async function connect() {
       auth.PhotonCustomAuthenticationToken;
 
     if (!photonToken) {
+      log('DIAG | PlayFab Photon token: MISSING');
       throw new Error(
         'PlayFab did not return a Photon authentication token.'
       );
     }
+    log('DIAG | PlayFab Photon token: received (token value hidden).');
 
     /* CREATE PHOTON CLIENT */
 
@@ -1075,6 +1081,7 @@ client = newClient;
     const regionsPromise = newClient.availableRegions();
     const connectedPromise = newClient.connect(connectOptions);
     photonRegions = await regionsPromise;
+    log('DIAG | Available Photon regions: ' + photonRegions.map(region => region.code).join(', '));
 
     const chosen = selectedRegion
       ? photonRegions.find(region =>
@@ -1094,6 +1101,8 @@ client = newClient;
     await newClient.selectRegion(chosen.code);
     await connectedPromise;
     activePhotonRegion = chosen.code;
+    log('DIAG | Connected region: ' + activePhotonRegion);
+    log('DIAG | Connected App Version: ' + appVersion);
 
     setStatus(true);
 
@@ -1215,13 +1224,17 @@ async function joinRoom(code) {
 
     const maxPlayers = Number($('#max').value);
     const originalRegion = activePhotonRegion || photonRegions[0]?.code || '';
+    const scanResults = [];
     let room = null;
+    log('DIAG | Room lookup config: App ID=' + $('#app').value.trim() + ', App Version=' + ($('#ver').value.trim() || 'live') + ', initial region=' + originalRegion);
 
     log('Checking room ' + code + ' in ' + (originalRegion || 'the selected region') + '...');
 
     try {
       room = await client.joinRoom(code);
     } catch (firstError) {
+      scanResults.push(originalRegion + ': ' + (firstError.code || 'error') + ' — ' + (firstError.message || 'no message'));
+      log('DIAG | Join attempt in ' + originalRegion + ' failed: code=' + (firstError.code || 'none') + '; message=' + (firstError.message || 'none'));
       if (firstError.code !== 'roomNotFound') {
         throw firstError;
       }
@@ -1242,6 +1255,7 @@ async function joinRoom(code) {
 
       for (const regionCode of regionsToTry) {
         let candidate = null;
+        let diagnosticStage = 'creating client';
         try {
           log('Checking region ' + regionCode + '...');
           candidate = await photonClientFactory({
@@ -1253,8 +1267,11 @@ async function joinRoom(code) {
           client = candidate;
           attachPhotonEvents(candidate);
 
+          diagnosticStage = 'requesting available regions';
           const availablePromise = candidate.availableRegions();
+          diagnosticStage = 'refreshing PlayFab Photon token';
           const candidateAuth = await freshPhotonConnectOptions();
+          diagnosticStage = 'connecting to Photon';
           const connectedPromise = candidate.connect(candidateAuth);
           const available = await availablePromise;
           const region = available.find(item =>
@@ -1262,17 +1279,23 @@ async function joinRoom(code) {
           );
           if (!region) throw new Error('Region unavailable: ' + regionCode);
 
+          diagnosticStage = 'selecting region ' + region.code;
           await candidate.selectRegion(region.code);
+          diagnosticStage = 'waiting for Photon connection';
           await connectedPromise;
           activePhotonRegion = region.code;
           setStatus(true);
+          log('DIAG | Connected to scan region: ' + region.code);
 
+          diagnosticStage = 'joining room ' + code;
           room = await candidate.joinRoom(code);
           log('Found room in Photon region ' + region.code + '.');
           break;
 
         } catch (regionError) {
-          log('No matching room in ' + regionCode + ': ' + (regionError.code || regionError.message));
+          const detail = regionCode + ' [' + diagnosticStage + ']: ' + (regionError.code || 'no-code') + ' — ' + (regionError.message || 'no message');
+          scanResults.push(detail);
+          log('DIAG | Region attempt failed: ' + detail);
           if (candidate) {
             try { await candidate.disconnect(); } catch {}
             try { candidate.dispose(); } catch {}
@@ -1283,6 +1306,7 @@ async function joinRoom(code) {
       }
 
       if (!room) {
+        log('DIAG | Region scan summary: ' + (scanResults.join(' || ') || 'No region results recorded.'));
         const fallbackRegion = originalRegion || photonRegions[0]?.code;
         if (!fallbackRegion) throw new Error('Could not determine a Photon region to create the room.');
         log('Room was not found in any region. Reconnecting to ' + fallbackRegion + ' to create a new room.');
@@ -1313,6 +1337,8 @@ async function joinRoom(code) {
       }
     }
 
+    log('DIAG | Final room region: ' + activePhotonRegion);
+    log('DIAG | Final App Version: ' + ($('#ver').value.trim() || 'live'));
     log('Room ready: ' + room.name + ' (' + activePhotonRegion + ')');
 
     room.setProperties({
