@@ -630,7 +630,7 @@ let page = 'STARTUP';
 let name = localStorage.gorillaName || 'gorilla';
 let nameDraft = name;
 
-let rgb = [0,0,0];
+let rgb = (localStorage.gorillaColor || '0,0,0').split(',').map(value => Math.max(0, Math.min(9, Number(value) || 0)));
 let colorIndex = 0;
 
 let turn = 'SNAP';
@@ -1282,6 +1282,7 @@ function press(key) {
       } else if (/^[0-9]$/.test(key)) {
 
         rgb[colorIndex] = Number(key);
+        localStorage.gorillaColor = rgb.join(',');
 
         publish();
       }
