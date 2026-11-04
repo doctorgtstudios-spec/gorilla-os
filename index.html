@@ -1021,6 +1021,18 @@ async function initGorillaWorld() {
         avatar.group.position.lerp(avatar.target, 0.22);
         const delta = avatar.targetRotation - avatar.group.rotation.y;
         avatar.group.rotation.y += Math.atan2(Math.sin(delta), Math.cos(delta)) * 0.22;
+        if (avatar.armTargets && world3D) avatar.armTargets.forEach((point,index) => {
+          if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) return;
+          const item = avatar.group.userData.armMeshes[index];
+          if (!item) return;
+          const hand = new THREE.Vector3(point.x,point.y,point.z);
+          item.hand.position.lerp(hand,0.3);
+          const shoulder = new THREE.Vector3(item.side*0.48,1.38,0.08);
+          const armDelta = item.hand.position.clone().sub(shoulder);
+          item.arm.position.copy(shoulder).add(item.hand.position).multiplyScalar(0.5);
+          item.arm.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),armDelta.clone().normalize());
+          item.arm.scale.y=Math.max(0.2,armDelta.length());
+        });
       }
       if (localAvatar) {
         localAvatar.position.set(localPosition.x, renderer.xr.isPresenting ? 0 : (performance.now()<jumpUntil?1.25:0), localPosition.z);
