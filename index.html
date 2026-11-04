@@ -659,7 +659,16 @@ function currentRoom() {
 }
 
 function players() {
-  return client?.room?.players || [];
+  try {
+    const roster = client?.room?.players;
+    if (!roster) return [];
+    if (Array.isArray(roster)) return roster;
+    if (typeof roster[Symbol.iterator] === 'function') return Array.from(roster);
+    return Object.values(roster);
+  } catch (error) {
+    log('Could not read room players: ' + error.message);
+    return [];
+  }
 }
 
 function actorName(player) {
@@ -719,8 +728,13 @@ function renderPlayers() {
 
   const list = players();
 
-  $('#count').textContent = list.length;
+  $('#count').textContent = String(list.length);
   board.replaceChildren();
+
+  if (!list.length) {
+    board.innerHTML = '<div class="note">Connected to room, waiting for players...</div>';
+    return;
+  }
 
   list.forEach(player => {
 
@@ -1680,6 +1694,11 @@ $('#newCustomId').addEventListener('click', () => {
 });
 
 /* INITIALIZE */
+
+/* Keep the leaderboard synced with the live Photon room roster. */
+setInterval(() => {
+  if (client?.room) renderPlayers();
+}, 1000);
 
 render();
 renderPlayers();
