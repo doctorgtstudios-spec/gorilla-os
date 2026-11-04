@@ -306,11 +306,11 @@ Run on HTTPS or localhost.
 <script type="module">
 'use strict';
 
-/* PHOTON REALTIME CORE */
+/* LOCAL PHOTON REALTIME CORE */
 
 import {
   createRealtimeClient
-} from 'https://esm.sh/@photonengine/realtime-core@6.0.1';
+} from './realtimecore.mjs';
 
 /* HELPERS */
 
@@ -672,7 +672,7 @@ async function connect() {
 
     /* CREATE PHOTON CLIENT */
 
-    log('Loading Photon Realtime Core...');
+    log('Loading local Photon Realtime Core...');
 
     newClient = await createRealtimeClient({
 
@@ -683,9 +683,13 @@ async function connect() {
       regionSelection:
         selectedRegion ? 'select' : 'default',
 
+      /* LOAD LOCAL WASM FILE */
+
       wasm: {
-        url:
-          'https://cdn.jsdelivr.net/npm/@photonengine/realtime-core@6.0.1/realtimecore.wasm'
+        url: new URL(
+          './realtimecore.wasm',
+          import.meta.url
+        ).href
       }
     });
 
@@ -1342,6 +1346,7 @@ render();
 renderPlayers();
 
 log('Gorilla OS ready.');
+log('Local Photon loader configured.');
 
 </script>
 
