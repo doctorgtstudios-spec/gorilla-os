@@ -954,6 +954,18 @@ async function initGorillaWorld() {
         avatar.group.position.lerp(avatar.target, 0.22);
         const delta = avatar.targetRotation - avatar.group.rotation.y;
         avatar.group.rotation.y += Math.atan2(Math.sin(delta), Math.cos(delta)) * 0.22;
+        if (avatar.armTargets && world3D) avatar.armTargets.forEach((point,index) => {
+          if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) return;
+          const item = avatar.group.userData.armMeshes[index];
+          if (!item) return;
+          const hand = new world3D.THREE.Vector3(point.x,point.y,point.z);
+          item.hand.position.lerp(hand,0.3);
+          const shoulder = new world3D.THREE.Vector3(item.side*0.48,1.38,0.08);
+          const armDelta = item.hand.position.clone().sub(shoulder);
+          item.arm.position.copy(shoulder).add(item.hand.position).multiplyScalar(0.5);
+          item.arm.quaternion.setFromUnitVectors(new world3D.THREE.Vector3(0,1,0),armDelta.clone().normalize());
+          item.arm.scale.y=Math.max(0.2,armDelta.length());
+        });
       }
       if (localAvatar) {
         localAvatar.position.set(localPosition.x, performance.now()<jumpUntil?1.25:0, localPosition.z);
@@ -969,6 +981,7 @@ async function initGorillaWorld() {
     const previousHands = [null, null];
     renderer.setAnimationLoop(() => {
       if (renderer.xr.isPresenting && localAvatar) {
+        if (!xrBaseSpace) xrBaseSpace = renderer.xr.getReferenceSpace();
         const xrCamera = renderer.xr.getCamera(camera);
         const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(xrCamera.quaternion);
         localRotation = Math.atan2(-forward.x, -forward.z);
@@ -1059,6 +1072,8 @@ function syncLocalPosition() {
       x: Math.round(localPosition.x * 100) / 100,
       z: Math.round(localPosition.z * 100) / 100,
       rotation: Math.round(localRotation * 100) / 100,
+      leftArm: localAvatar?.userData?.armMeshes?.[0]?.hand ? {x:localAvatar.userData.armMeshes[0].hand.position.x,y:localAvatar.userData.armMeshes[0].hand.position.y,z:localAvatar.userData.armMeshes[0].hand.position.z} : null,
+      rightArm: localAvatar?.userData?.armMeshes?.[1]?.hand ? {x:localAvatar.userData.armMeshes[1].hand.position.x,y:localAvatar.userData.armMeshes[1].hand.position.y,z:localAvatar.userData.armMeshes[1].hand.position.z} : null,
       color: rgb.join(','),
       name
     }, { reliable: false });
@@ -1074,12 +1089,13 @@ function handlePlayerMovement({ senderNumber, data }) {
   if (!avatar && world3D) {
     const player = players().find(item => getActorNumber(item) === senderNumber);
     const group = world3D.makeAvatar(player ? worldColor(player) : 0x8dff9a);
-    avatar = { group, target: new world3D.THREE.Vector3(), targetRotation: 0 };
+    avatar = { group, target: new world3D.THREE.Vector3(), targetRotation: 0, armTargets: [null,null] };
     remoteAvatars.set(senderNumber, avatar);
   }
   if (!avatar) return;
   avatar.target.set(Number(data.x), 0, Number(data.z));
   avatar.targetRotation = Number(data.rotation);
+  avatar.armTargets = [data.leftArm, data.rightArm];
   if (data.color && world3D) {
     const channels = String(data.color).split(',').map(v => Math.max(0, Math.min(9, Number(v) || 0)));
     const color = new world3D.THREE.Color((channels[0]*28)/255, (channels[1]*28)/255, (channels[2]*28)/255);
