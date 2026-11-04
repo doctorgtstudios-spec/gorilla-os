@@ -330,7 +330,7 @@ Uses PlayFab authentication and Photon Realtime Core. The leaderboard lists ever
 
 <div class="updateEntry">
   <strong>November 4, 2026 — Connection diagnostics</strong>
-  <p>Added detailed Photon diagnostics for PlayFab authentication, App ID/version, available regions, room lookup, and join failures to help troubleshoot browser-to-Quest room compatibility.</p>
+  <p>Added connection diagnostics for authentication, app configuration, available regions, room lookup, and join failures to help troubleshoot browser-to-Quest room compatibility.</p>
 </div>
 
 <div class="updateEntry">
@@ -1944,11 +1944,11 @@ $('#newCustomId').addEventListener('click', () => {
   log('New Custom ID generated.');
 });
 
-/* UPDATE LOG EXPORT */
+/* UPDATE LOG EXPORT — redact connection identifiers before saving */
 
 $('#downloadUpdateLog').addEventListener('click', () => {
   const entries = Array.from(document.querySelectorAll('#updates .updateEntry'));
-  const contents = [
+  let contents = [
     'GORILLA OS — UPDATE LOG',
     '========================================',
     '',
@@ -1958,6 +1958,12 @@ $('#downloadUpdateLog').addEventListener('click', () => {
       ''
     ])
   ].join('\n');
+
+  // Never include private service identifiers or authentication values in log.txt.
+  contents = contents
+    .replace(/(PlayFab\\s*Title\\s*ID\\s*[:=]\\s*)[^\\s,;]+/gi, '$1[HIDDEN]')
+    .replace(/(Photon(?:\\s+Realtime|\\s+Voice)?\\s+App\\s*ID\\s*[:=]\\s*)[^\\s,;]+/gi, '$1[HIDDEN]')
+    .replace(/((?:Photon\\s*)?(?:auth(?:entication)?\\s*)?token\\s*[:=]\\s*)[^\\s,;]+/gi, '$1[HIDDEN]');
 
   const blob = new Blob([contents], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
