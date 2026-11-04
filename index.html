@@ -675,29 +675,59 @@ function currentRoom() {
 
 function players() {
   try {
-    const roster = client?.room?.players;
-    if (!roster) return [];
+    const room = client?.room;
+    if (!room) return [];
 
-    // Photon room rosters may be Maps, arrays, or actor-number keyed objects.
-    // A Map converted with Array.from() produces [key, player] pairs, not players.
-    if (roster instanceof Map) return Array.from(roster.values());
+    const roster = room.players;
+    let list = [];
 
-    if (Array.isArray(roster)) {
-      return roster.map(item =>
+    // Photon Realtime Core v6 documents room.players as a player snapshot array.
+    // Keep fallbacks for Map/object forms returned by alternate SDK builds.
+    if (roster instanceof Map) {
+      list = Array.from(roster.values());
+    } else if (Array.isArray(roster)) {
+      list = roster.map(item =>
         Array.isArray(item) && item.length === 2 ? item[1] : item
       ).filter(Boolean);
-    }
-
-    if (typeof roster[Symbol.iterator] === 'function') {
-      return Array.from(roster, item =>
+    } else if (roster && typeof roster[Symbol.iterator] === 'function') {
+      list = Array.from(roster, item =>
         Array.isArray(item) && item.length === 2 ? item[1] : item
       ).filter(Boolean);
+    } else if (roster && typeof roster === 'object') {
+      if (typeof roster.values === 'function') {
+        try { list = Array.from(roster.values()).filter(Boolean); } catch {}
+      }
+      if (!list.length) list = Object.values(roster).filter(Boolean);
     }
 
-    return Object.values(roster).filter(Boolean);
+    // The room's server-reported count is authoritative. If the exposed roster
+    // is unexpectedly empty, recover snapshots through getPlayer() and the
+    // guaranteed localPlayer reference rather than showing a false zero.
+    if (list.length < Number(room.playerCount || 0)) {
+      const found = new Map(
+        list.filter(Boolean).map(player => [Number(actorNumber(player)), player])
+      );
+
+      if (client?.localPlayer) {
+        found.set(Number(actorNumber(client.localPlayer)), client.localPlayer);
+      }
+
+      if (typeof room.getPlayer === 'function') {
+        for (let number = 1; number <= 255; number++) {
+          try {
+            const player = room.getPlayer(number);
+            if (player) found.set(Number(actorNumber(player)), player);
+          } catch {}
+        }
+      }
+
+      list = Array.from(found.values()).filter(Boolean);
+    }
+
+    return list;
   } catch (error) {
     log('Could not read room players: ' + error.message);
-    return [];
+    return client?.localPlayer ? [client.localPlayer] : [];
   }
 }
 
@@ -771,11 +801,18 @@ function renderPlayers() {
 
   const list = players();
 
-  $('#count').textContent = String(list.length);
+  const serverPlayerCount = Number(client?.room?.playerCount);
+  $('#count').textContent = String(
+    Number.isFinite(serverPlayerCount) && serverPlayerCount >= 0
+      ? serverPlayerCount
+      : list.length
+  );
   board.replaceChildren();
 
   if (!list.length) {
-    board.innerHTML = '<div class="note">Connected to room, waiting for players...</div>';
+    const count = Number(client?.room?.playerCount || 0);
+    board.innerHTML = '<div class="note">Photon reports ' + count +
+      ' player(s), but this SDK build did not provide their player details yet.</div>';
     return;
   }
 
