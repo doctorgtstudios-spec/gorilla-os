@@ -214,9 +214,11 @@ label {
 <div id="leaderboard">
   <div class="note">Not in a room.</div>
 </div>
-<div class="note">
-Mute controls are local UI controls. Voice transmission is not included.
+<div class="controls">
+<button id="voiceStart">START VOICE</button>
+<button id="voiceMute" class="danger" disabled>MUTE MIC</button>
 </div>
+<div class="note" id="voiceStatus">Voice is off. Join a room, then press START VOICE and allow microphone access.</div>
 </section>
 
 <section class="box full">
@@ -239,10 +241,7 @@ Mute controls are local UI controls. Voice transmission is not included.
 <input id="app" placeholder="Photon Realtime App ID">
 </div>
 
-<div>
-<label>Photon Voice App ID</label>
-<input id="voiceApp" type="text" placeholder="Photon Voice App ID" autocomplete="off">
-</div>
+
 
 <div>
 <label>App Version</label>
@@ -270,8 +269,7 @@ Mute controls are local UI controls. Voice transmission is not included.
 </div>
 
 <div class="note">
-Uses PlayFab authentication and Photon Realtime Core. The Voice App ID is saved here for the upcoming voice integration; voice transmission is not active yet.
-Run on HTTPS or localhost.
+Uses PlayFab authentication and Photon Realtime Core. Room voice uses browser WebRTC audio; no separate Photon Voice App ID is needed. Microphone access requires HTTPS and your permission.
 </div>
 
 <div id="log"></div>
@@ -335,6 +333,192 @@ let client = null;
 let playFabId = null;
 let sessionTicket = null;
 let connecting = false;
+
+const VOICE_SIGNAL = 42;
+let voiceActive = false;
+let localStream = null;
+const voicePeers = new Map();
+const remoteAudios = new Map();
+const pendingIce = new Map();
+
+function voiceStatus(message) {
+  $('#voiceStatus').textContent = message;
+}
+
+function sendVoiceSignal(to, type, payload = {}) {
+  if (!client?.isConnected || !isJoined()) return;
+  client.sendEvent(VOICE_SIGNAL, {
+    to, type, from: client.localPlayer?.number, ...payload
+  }, { reliable: true, targetPlayers: [to] });
+}
+
+function closeVoicePeer(playerNumber) {
+  const pc = voicePeers.get(playerNumber);
+  if (pc) {
+    pc.onicecandidate = null;
+    pc.ontrack = null;
+    pc.close();
+    voicePeers.delete(playerNumber);
+  }
+  const audio = remoteAudios.get(playerNumber);
+  if (audio) {
+    audio.pause();
+    audio.srcObject = null;
+    audio.remove();
+    remoteAudios.delete(playerNumber);
+  }
+  pendingIce.delete(playerNumber);
+}
+
+function closeAllVoicePeers() {
+  [...voicePeers.keys()].forEach(closeVoicePeer);
+}
+
+async function flushVoiceIce(playerNumber, pc) {
+  const queued = pendingIce.get(playerNumber) || [];
+  pendingIce.delete(playerNumber);
+  for (const candidate of queued) {
+    try { await pc.addIceCandidate(candidate); }
+    catch (error) { log('Voice ICE: ' + error.message); }
+  }
+}
+
+async function makeVoicePeer(playerNumber, initiate) {
+  if (!voiceActive || !localStream || !isJoined()) return;
+  if (playerNumber === client.localPlayer?.number) return;
+  let pc = voicePeers.get(playerNumber);
+  if (pc) {
+    if (initiate && pc.signalingState === 'stable' && !pc.remoteDescription) {
+      // Existing connection can still be used for the initial offer.
+    } else {
+      return;
+    }
+  } else {
+    pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+    voicePeers.set(playerNumber, pc);
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+    pc.onicecandidate = event => {
+      if (event.candidate) {
+        sendVoiceSignal(playerNumber, 'ice', {
+          candidate: event.candidate.toJSON()
+        });
+      }
+    };
+    pc.ontrack = event => {
+      let audio = remoteAudios.get(playerNumber);
+      if (!audio) {
+        audio = document.createElement('audio');
+        audio.autoplay = true;
+        audio.playsInline = true;
+        audio.dataset.player = String(playerNumber);
+        document.body.append(audio);
+        remoteAudios.set(playerNumber, audio);
+      }
+      audio.srcObject = event.streams[0] || new MediaStream([event.track]);
+      audio.play().catch(() => voiceStatus('Tap START VOICE again to enable audio playback.'));
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        closeVoicePeer(playerNumber);
+      }
+    };
+  }
+
+  if (initiate && !pc.localDescription) {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    sendVoiceSignal(playerNumber, 'offer', { description: pc.localDescription });
+  }
+}
+
+async function handleVoiceSignal({ senderNumber, data }) {
+  if (!voiceActive || !data || data.to !== client?.localPlayer?.number) return;
+  const from = senderNumber;
+  try {
+    if (data.type === 'offer') {
+      await makeVoicePeer(from, false);
+      const pc = voicePeers.get(from);
+      await pc.setRemoteDescription(data.description);
+      await flushVoiceIce(from, pc);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      sendVoiceSignal(from, 'answer', { description: pc.localDescription });
+    } else if (data.type === 'answer') {
+      const pc = voicePeers.get(from);
+      if (!pc) return;
+      await pc.setRemoteDescription(data.description);
+      await flushVoiceIce(from, pc);
+    } else if (data.type === 'ice') {
+      const pc = voicePeers.get(from);
+      if (!pc || !pc.remoteDescription) {
+        const queue = pendingIce.get(from) || [];
+        queue.push(data.candidate);
+        pendingIce.set(from, queue);
+      } else {
+        await pc.addIceCandidate(data.candidate);
+      }
+    }
+  } catch (error) {
+    log('Voice connection error: ' + error.message);
+  }
+}
+
+async function startVoice() {
+  if (voiceActive) return;
+  if (!client?.isConnected || !isJoined()) {
+    voiceStatus('Connect and join a room before starting voice.');
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    voiceStatus('This browser does not support microphone capture.');
+    return;
+  }
+  try {
+    voiceStatus('Requesting microphone permission...');
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false
+    });
+    voiceActive = true;
+    $('#voiceStart').textContent = 'VOICE ON';
+    $('#voiceMute').disabled = false;
+    $('#voiceMute').textContent = 'MUTE MIC';
+    voiceStatus('Voice connected. Speak to players in this room.');
+    const me = client.localPlayer?.number;
+    for (const player of players()) {
+      if (player.number !== me) {
+        await makeVoicePeer(player.number, me < player.number);
+      }
+    }
+  } catch (error) {
+    voiceActive = false;
+    if (localStream) localStream.getTracks().forEach(track => track.stop());
+    localStream = null;
+    voiceStatus('Microphone unavailable: ' + error.message);
+  }
+}
+
+function stopVoice() {
+  voiceActive = false;
+  closeAllVoicePeers();
+  if (localStream) localStream.getTracks().forEach(track => track.stop());
+  localStream = null;
+  $('#voiceStart').textContent = 'START VOICE';
+  $('#voiceMute').disabled = true;
+  $('#voiceMute').textContent = 'MUTE MIC';
+  voiceStatus('Voice is off.');
+}
+
+function toggleVoiceMute() {
+  if (!localStream) return;
+  const track = localStream.getAudioTracks()[0];
+  if (!track) return;
+  track.enabled = !track.enabled;
+  $('#voiceMute').textContent = track.enabled ? 'MUTE MIC' : 'UNMUTE MIC';
+  voiceStatus(track.enabled ? 'Microphone is live.' : 'Microphone is muted.');
+}
 
 /* PLAYFAB REQUEST */
 
@@ -547,6 +731,8 @@ function renderPlayers() {
 
 function attachPhotonEvents(c) {
 
+  c.onEvent(VOICE_SIGNAL, handleVoiceSignal);
+
   c.on('roomJoined', () => {
 
     log('Joined room: ' + currentRoom());
@@ -554,9 +740,16 @@ function attachPhotonEvents(c) {
     publish();
     renderPlayers();
     render();
+    if (voiceActive) {
+      const me = c.localPlayer?.number;
+      for (const player of players()) {
+        if (player.number !== me) makeVoicePeer(player.number, me < player.number);
+      }
+    }
   });
 
   c.on('roomLeft', () => {
+    stopVoice();
 
     log('Left room.');
 
@@ -570,6 +763,10 @@ function attachPhotonEvents(c) {
     log((player.name || 'A player') + ' joined.');
 
     renderPlayers();
+    if (voiceActive) {
+      const me = c.localPlayer?.number;
+      makeVoicePeer(player.number, me < player.number);
+    }
   });
 
   c.on('playerLeft', ({playerNumber}) => {
@@ -577,6 +774,7 @@ function attachPhotonEvents(c) {
     log('Player ' + playerNumber + ' left.');
 
     muted.delete(playerNumber);
+    closeVoicePeer(playerNumber);
     renderPlayers();
   });
 
@@ -733,6 +931,7 @@ newClient = await createRealtimeClient({
 });
 
 client = newClient;
+    attachPhotonEvents(newClient);
     
     /* PLAYFAB CUSTOM AUTH */
 
@@ -834,6 +1033,7 @@ client = newClient;
 
 async function disconnect() {
 
+  stopVoice();
   const oldClient = client;
 
   client = null;
@@ -1350,6 +1550,8 @@ addEventListener('keydown',event => {
 
 $('#connect').onclick = connect;
 $('#disconnect').onclick = disconnect;
+$('#voiceStart').onclick = startVoice;
+$('#voiceMute').onclick = toggleVoiceMute;
 
 /* ROOM BUTTONS */
 
