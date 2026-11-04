@@ -717,19 +717,7 @@ client = newClient;
 
 attachPhotonEvents(newClient);
 
-      /* LOAD LOCAL WASM FILE */
-
-      wasm: {
-        url: new URL(
-          './realtimecore.wasm',
-          import.meta.url
-        ).href
-      }
-    });
-
-    client = newClient;
-
-    attachPhotonEvents(newClient);
+      
 
     /* PLAYFAB CUSTOM AUTH */
 
