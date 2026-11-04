@@ -241,7 +241,10 @@ label {
 <input id="app" placeholder="Photon Realtime App ID">
 </div>
 
-
+<div>
+<label>Photon App ID (Voice)</label>
+<input id="voiceApp" placeholder="Photon Voice App ID" autocomplete="off">
+</div>
 
 <div>
 <label>App Version</label>
@@ -269,7 +272,7 @@ label {
 </div>
 
 <div class="note">
-Uses PlayFab authentication and Photon Realtime Core. Room voice uses browser WebRTC audio; no separate Photon Voice App ID is needed. Microphone access requires HTTPS and your permission.
+Uses PlayFab authentication and Photon Realtime Core. The Voice App ID is saved for Photon Voice integration; it is not connected yet. Current browser voice uses WebRTC and does not connect to Photon Voice players. Microphone access requires HTTPS and your permission.
 </div>
 
 <div id="log"></div>
@@ -1564,6 +1567,14 @@ $('#join').onclick = () => {
 };
 
 $('#leave').onclick = leaveRoom;
+
+/* SAVED PHOTON VOICE APP ID */
+
+$('#voiceApp').value = localStorage.gorillaVoiceAppId || '';
+$('#voiceApp').addEventListener('change', () => {
+  localStorage.gorillaVoiceAppId = $('#voiceApp').value.trim();
+  log('Photon Voice App ID saved.');
+});
 
 /* CUSTOM ID */
 
