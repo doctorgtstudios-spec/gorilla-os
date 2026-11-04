@@ -159,6 +159,29 @@ label {
   gap:7px;
 }
 
+.updateEntry {
+  padding:10px;
+  margin-top:8px;
+  background:#090e08;
+  border:1px solid #394a34;
+  border-left:3px solid var(--green);
+  border-radius:4px;
+}
+
+.updateEntry strong {
+  display:block;
+  color:var(--green);
+  font:12px monospace;
+  margin-bottom:5px;
+}
+
+.updateEntry p {
+  margin:0;
+  color:#c4d5c6;
+  font-size:12px;
+  line-height:1.5;
+}
+
 .player {
   display:grid;
   grid-template-columns:18px minmax(0,1fr) auto auto auto;
@@ -295,6 +318,27 @@ Uses PlayFab authentication and Photon Realtime Core. The leaderboard lists ever
 </div>
 
 <div id="log"></div>
+</section>
+
+<section class="box full" id="updates">
+<h3>UPDATE LOG <span class="pill ok">LATEST</span></h3>
+
+<div class="updateEntry">
+  <strong>November 5, 2026 — Player list improvements</strong>
+  <p>Updated the online roster to read Photon room player snapshots, include the local player when needed, and avoid displaying a false zero count when players are present.</p>
+</div>
+
+<div class="updateEntry">
+  <strong>November 4, 2026 — Connection diagnostics</strong>
+  <p>Added detailed Photon diagnostics for PlayFab authentication, App ID/version, available regions, room lookup, and join failures to help troubleshoot browser-to-Quest room compatibility.</p>
+</div>
+
+<div class="updateEntry">
+  <strong>November 4, 2026 — Room code region scanning</strong>
+  <p>Added a scan across available Photon regions when a room code is not found in the initially selected region.</p>
+</div>
+
+<div class="note">New Gorilla OS changes will be listed here.</div>
 </section>
 
 <section class="box full">
