@@ -309,7 +309,8 @@ Run on HTTPS or localhost.
 /* LOCAL PHOTON REALTIME CORE */
 
 import {
-  createRealtimeClient
+  createRealtimeClient,
+  preloadRealtime
 } from './realtimecore.mjs';
 
 /* HELPERS */
@@ -672,16 +673,49 @@ async function connect() {
 
     /* CREATE PHOTON CLIENT */
 
-    log('Loading local Photon Realtime Core...');
+log('Loading local Photon WASM...');
 
-    newClient = await createRealtimeClient({
+const wasmUrl = new URL(
+  './realtimecore.wasm',
+  window.location.href
+);
 
-      appId: app,
-      appVersion: appVersion,
-      protocol: 'wss',
+log('WASM URL: ' + wasmUrl.href);
 
-      regionSelection:
-        selectedRegion ? 'select' : 'default',
+const wasmResponse = await fetch(wasmUrl);
+
+if (!wasmResponse.ok) {
+  throw new Error(
+    'WASM download failed: HTTP ' + wasmResponse.status
+  );
+}
+
+const wasmBytes = await wasmResponse.arrayBuffer();
+
+log('WASM downloaded: ' + wasmBytes.byteLength + ' bytes');
+
+if (wasmBytes.byteLength < 100000) {
+  throw new Error('WASM file is too small or incorrect.');
+}
+
+log('Loading WASM into Photon...');
+
+await preloadRealtime({
+  binary: wasmBytes
+});
+
+log('Photon WASM loaded successfully.');
+
+newClient = await createRealtimeClient({
+  appId: app,
+  appVersion: appVersion,
+  protocol: 'wss',
+  regionSelection: selectedRegion ? 'select' : 'default'
+});
+
+client = newClient;
+
+attachPhotonEvents(newClient);
 
       /* LOAD LOCAL WASM FILE */
 
