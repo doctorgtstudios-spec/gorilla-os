@@ -965,18 +965,31 @@ async function initGorillaWorld() {
       camera.lookAt(focus.x, 1, focus.z);
       renderer.render(scene, camera);
     };
+    let xrBaseSpace = null;
+    const previousHands = [null, null];
     renderer.setAnimationLoop(() => {
       if (renderer.xr.isPresenting && localAvatar) {
         const xrCamera = renderer.xr.getCamera(camera);
-        const headPos = new THREE.Vector3();
-        xrCamera.getWorldPosition(headPos);
-        localPosition.x = headPos.x;
-        localPosition.z = headPos.z;
         const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(xrCamera.quaternion);
         localRotation = Math.atan2(-forward.x, -forward.z);
         xrControllers.forEach((controller, index) => {
           const handWorld = new THREE.Vector3();
           controller.getWorldPosition(handWorld);
+          const previous = previousHands[index];
+          if (previous && handWorld.y < 1.15) {
+            const dx = handWorld.x - previous.x;
+            const dz = handWorld.z - previous.z;
+            const distance = Math.hypot(dx, dz);
+            if (distance > 0.008 && distance < 0.35) {
+              localPosition.x -= dx * 1.65;
+              localPosition.z -= dz * 1.65;
+              if (xrBaseSpace && typeof XRRigidTransform !== 'undefined') {
+                const offset = new XRRigidTransform({position:{x:-localPosition.x,y:0,z:-localPosition.z}});
+                renderer.xr.setReferenceSpace(xrBaseSpace.getOffsetReferenceSpace(offset));
+              }
+            }
+          }
+          previousHands[index] = handWorld.clone();
           const localHand = localAvatar.worldToLocal(handWorld.clone());
           const item = localAvatar.userData.armMeshes[index];
           const shoulder = new THREE.Vector3(item.side * 0.48, 1.38, 0.08);
@@ -996,9 +1009,10 @@ async function initGorillaWorld() {
         const delta = avatar.targetRotation - avatar.group.rotation.y;
         avatar.group.rotation.y += Math.atan2(Math.sin(delta), Math.cos(delta)) * 0.22;
       }
-      if (localAvatar && !renderer.xr.isPresenting) {
-        localAvatar.position.set(localPosition.x, performance.now()<jumpUntil?1.25:0, localPosition.z);
+      if (localAvatar) {
+        localAvatar.position.set(localPosition.x, renderer.xr.isPresenting ? 0 : (performance.now()<jumpUntil?1.25:0), localPosition.z);
         localAvatar.rotation.y = localRotation;
+        localAvatar.userData.headBody.forEach(mesh => { mesh.visible = !renderer.xr.isPresenting; });
       }
       if (!renderer.xr.isPresenting && localAvatar) {
         const focus = localAvatar.position;
@@ -1021,7 +1035,7 @@ async function enterWebXR() {
   if (!navigator.xr) { $('#xrState').textContent = 'WEBXR UNAVAILABLE'; log('WebXR is unavailable in this browser.'); return; }
   try {
     if (!(await navigator.xr.isSessionSupported('immersive-vr'))) { $('#xrState').textContent = 'VR UNSUPPORTED'; return; }
-    const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor','bounded-floor','hand-tracking'] });
+    const session = await navigator.xr.requestSession('immersive-vr', { requiredFeatures: ['local-floor'], optionalFeatures: ['bounded-floor','hand-tracking'] });
     await world3D.renderer.xr.setSession(session);
     $('#xrState').textContent = 'VR ACTIVE';
     $('#enterXR').disabled = true; $('#exitXR').disabled = false;
