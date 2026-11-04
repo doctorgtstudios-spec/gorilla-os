@@ -673,23 +673,46 @@ function players() {
   try {
     const roster = client?.room?.players;
     if (!roster) return [];
-    if (Array.isArray(roster)) return roster;
-    if (typeof roster[Symbol.iterator] === 'function') return Array.from(roster);
-    return Object.values(roster);
+
+    // Photon room rosters may be Maps, arrays, or actor-number keyed objects.
+    // A Map converted with Array.from() produces [key, player] pairs, not players.
+    if (roster instanceof Map) return Array.from(roster.values());
+
+    if (Array.isArray(roster)) {
+      return roster.map(item =>
+        Array.isArray(item) && item.length === 2 ? item[1] : item
+      ).filter(Boolean);
+    }
+
+    if (typeof roster[Symbol.iterator] === 'function') {
+      return Array.from(roster, item =>
+        Array.isArray(item) && item.length === 2 ? item[1] : item
+      ).filter(Boolean);
+    }
+
+    return Object.values(roster).filter(Boolean);
   } catch (error) {
     log('Could not read room players: ' + error.message);
     return [];
   }
 }
 
+function playerProperties(player) {
+  return player?.customProperties || player?.properties || {};
+}
+
+function actorNumber(player) {
+  return player?.number ?? player?.actorNumber ?? player?.actorNr;
+}
+
 function actorName(player) {
-  return player?.name || 'GORILLA';
+  return player?.name || player?.nickname || player?.userName || 'GORILLA';
 }
 
 function actorColor(player) {
 
   const value =
-    player?.customProperties?.color || '0,0,0';
+    playerProperties(player).color || '0,0,0';
 
   const channels = String(value)
     .split(',')
@@ -766,26 +789,26 @@ function renderPlayers() {
 
     const platform = document.createElement('span');
     platform.className = 'platformBadge';
-    platform.textContent = player.customProperties?.platform === 'QUEST'
+    platform.textContent = playerProperties(player).platform === 'QUEST'
       ? 'QUEST'
       : 'WEB';
 
     const muteButton = document.createElement('button');
 
     muteButton.textContent =
-      muted.has(player.number)
+      muted.has(actorNumber(player))
         ? 'UNMUTE'
         : 'MUTE';
 
     muteButton.onclick = () => {
 
       if (muted.has(player.number)) {
-        muted.delete(player.number);
+        muted.delete(actorNumber(player));
       } else {
-        muted.add(player.number);
+        muted.add(actorNumber(player));
       }
 
-      const remoteAudio = remoteAudios.get(player.number);
+      const remoteAudio = remoteAudios.get(actorNumber(player));
       if (remoteAudio) remoteAudio.muted = muted.has(player.number);
       renderPlayers();
     };
@@ -793,7 +816,7 @@ function renderPlayers() {
     const you = document.createElement('span');
 
     you.textContent =
-      player.number === client.localPlayer?.number
+      actorNumber(player) === actorNumber(client.localPlayer)
         ? 'YOU'
         : '';
 
