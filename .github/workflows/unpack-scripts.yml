@@ -1,0 +1,26 @@
+name: Unpack uploaded scripts
+on:
+  push:
+    paths:
+      - '.github/workflows/unpack-scripts.yml'
+      - 'Scripts.zip'
+permissions:
+  contents: write
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract Scripts.zip
+        run: unzip -o Scripts.zip -d .
+      - name: Commit extracted scripts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Scripts/
+          if git diff --cached --quiet; then
+            echo "No extracted script changes."
+            exit 0
+          fi
+          git commit -m "Extract uploaded script archive"
+          git push
