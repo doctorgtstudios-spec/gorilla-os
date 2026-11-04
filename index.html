@@ -272,7 +272,7 @@ label {
 </div>
 
 <div class="note">
-Uses PlayFab authentication and Photon Realtime Core. The Voice App ID is saved for Photon Voice integration; it is not connected yet. Current browser voice uses WebRTC and does not connect to Photon Voice players. Microphone access requires HTTPS and your permission.
+Uses PlayFab authentication and Photon Realtime Core. Browser-to-browser voice uses WebRTC over your Photon room for signaling. Both players must join the same room and press START VOICE, then allow microphone access. This does not connect to VR voice.
 </div>
 
 <div id="log"></div>
@@ -348,6 +348,11 @@ function voiceStatus(message) {
   $('#voiceStatus').textContent = message;
 }
 
+function playerNameForVoice(playerNumber) {
+  const player = players().find(item => item.number === playerNumber);
+  return player?.name || ('player ' + playerNumber);
+}
+
 function sendVoiceSignal(to, type, payload = {}) {
   if (!client?.isConnected || !isJoined()) return;
   client.sendEvent(VOICE_SIGNAL, {
@@ -390,15 +395,24 @@ async function makeVoicePeer(playerNumber, initiate) {
   if (!voiceActive || !localStream || !isJoined()) return;
   if (playerNumber === client.localPlayer?.number) return;
   let pc = voicePeers.get(playerNumber);
+  if (pc && initiate && pc.localDescription && !pc.remoteDescription) {
+    // The other player may not have started voice when our first offer arrived.
+    // Rebuild the pending connection when they announce that they are ready.
+    closeVoicePeer(playerNumber);
+    pc = null;
+  }
   if (pc) {
-    if (initiate && pc.signalingState === 'stable' && !pc.remoteDescription) {
-      // Existing connection can still be used for the initial offer.
-    } else {
+    if (!(initiate && pc.signalingState === 'stable' && !pc.remoteDescription)) {
       return;
     }
   } else {
     pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun.cloudflare.com:3478' },
+        { urls: 'stun:stun.relay.metered.ca:80' }
+      ]
     });
     voicePeers.set(playerNumber, pc);
     localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
@@ -415,15 +429,24 @@ async function makeVoicePeer(playerNumber, initiate) {
         audio = document.createElement('audio');
         audio.autoplay = true;
         audio.playsInline = true;
+        audio.muted = muted.has(playerNumber);
         audio.dataset.player = String(playerNumber);
         document.body.append(audio);
         remoteAudios.set(playerNumber, audio);
       }
+      audio.muted = muted.has(playerNumber);
       audio.srcObject = event.streams[0] || new MediaStream([event.track]);
-      audio.play().catch(() => voiceStatus('Tap START VOICE again to enable audio playback.'));
+      audio.play().then(() => {
+        voiceStatus('Voice audio connected. You can talk now.');
+      }).catch(() => voiceStatus('Tap START VOICE again to allow audio playback.'));
     };
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      if (pc.connectionState === 'connected') {
+        voiceStatus('Voice connected to ' + playerNameForVoice(playerNumber) + '.');
+      } else if (pc.connectionState === 'failed') {
+        voiceStatus('Could not reach ' + playerNameForVoice(playerNumber) + '. This network may need a TURN relay.');
+        closeVoicePeer(playerNumber);
+      } else if (pc.connectionState === 'closed') {
         closeVoicePeer(playerNumber);
       }
     };
@@ -440,6 +463,13 @@ async function handleVoiceSignal({ senderNumber, data }) {
   if (!voiceActive || !data || data.to !== client?.localPlayer?.number) return;
   const from = senderNumber;
   try {
+    if (data.type === 'ready') {
+      // The lower player number creates the offer. This second handshake
+      // retries if the first offer arrived before the other player enabled mic.
+      const me = client.localPlayer?.number;
+      if (me < from) await makeVoicePeer(from, true);
+      return;
+    }
     if (data.type === 'offer') {
       await makeVoicePeer(from, false);
       const pc = voicePeers.get(from);
@@ -488,11 +518,12 @@ async function startVoice() {
     $('#voiceStart').textContent = 'VOICE ON';
     $('#voiceMute').disabled = false;
     $('#voiceMute').textContent = 'MUTE MIC';
-    voiceStatus('Voice connected. Speak to players in this room.');
+    voiceStatus('Microphone on. Waiting for other players to enable voice...');
     const me = client.localPlayer?.number;
     for (const player of players()) {
       if (player.number !== me) {
-        await makeVoicePeer(player.number, me < player.number);
+        sendVoiceSignal(player.number, 'ready');
+        if (me < player.number) await makeVoicePeer(player.number, true);
       }
     }
   } catch (error) {
@@ -709,6 +740,8 @@ function renderPlayers() {
         muted.add(player.number);
       }
 
+      const remoteAudio = remoteAudios.get(player.number);
+      if (remoteAudio) remoteAudio.muted = muted.has(player.number);
       renderPlayers();
     };
 
