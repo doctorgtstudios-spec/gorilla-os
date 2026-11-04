@@ -270,6 +270,14 @@ label {
 <button id="connect">CONNECT</button>
 <button id="disconnect" class="danger">DISCONNECT</button>
 </div>
+<div class="controls">
+<button id="saveConfig">SAVE CONFIG</button>
+<button id="loadConfig">LOAD CONFIG</button>
+</div>
+<div class="note" id="configStatus">Save your connection settings on this browser.</div>
+<div class="controls">
+
+</div>
 
 <div class="note">
 Uses PlayFab authentication and Photon Realtime Core. Browser-to-browser voice uses WebRTC over your Photon room for signaling. Both players must join the same room and press START VOICE, then allow microphone access. This does not connect to VR voice.
@@ -1600,6 +1608,42 @@ $('#join').onclick = () => {
 };
 
 $('#leave').onclick = leaveRoom;
+
+
+/* SAVE AND LOAD CONNECTION CONFIG */
+function saveConfig() {
+  const config = {
+    title: $('#title').value.trim(),
+    customId: $('#cid').value.trim(),
+    photonAppId: $('#app').value.trim(),
+    photonVoiceAppId: $('#voiceApp').value.trim(),
+    gameVersion: $('#ver').value.trim(),
+    region: $('#region').value
+  };
+  localStorage.setItem('gorillaOsConnectionConfig', JSON.stringify(config));
+  $('#configStatus').textContent = 'Config saved on this browser.';
+  log('Connection config saved.');
+}
+function loadConfig() {
+  const saved = localStorage.getItem('gorillaOsConnectionConfig');
+  if (!saved) {
+    $('#configStatus').textContent = 'No saved config found yet.';
+    return;
+  }
+  const config = JSON.parse(saved);
+  $('#title').value = config.title || '';
+  $('#cid').value = config.customId || '';
+  $('#app').value = config.photonAppId || '';
+  $('#voiceApp').value = config.photonVoiceAppId || '';
+  $('#ver').value = config.gameVersion || 'live';
+  $('#region').value = config.region || '';
+  localStorage.gorillaCustomId = $('#cid').value;
+  localStorage.gorillaVoiceAppId = $('#voiceApp').value;
+  $('#configStatus').textContent = 'Config loaded. Press CONNECT when ready.';
+  log('Connection config loaded.');
+}
+$('#saveConfig').onclick = saveConfig;
+$('#loadConfig').onclick = loadConfig;
 
 /* SAVED PHOTON VOICE APP ID */
 
