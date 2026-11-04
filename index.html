@@ -197,7 +197,8 @@ label {
 #worldView canvas {display:block;width:100%;height:100%}
 .worldControls button {min-width:74px;min-height:48px;touch-action:none}
 .worldControls button.pressed {background:#527c40;transform:scale(.96)}
-\n</style>
+
+</style>
 </head>
 
 <body>
@@ -221,6 +222,18 @@ label {
 <div id="kb"></div>
 <div class="controls" id="ctl"></div>
 <div class="note">Arrow keys navigate. F1-F3 select options.</div>
+</section>
+
+<section class="box full">
+<h3>GORILLA WORLD <span id="worldStatus" class="pill">LOADING</span></h3>
+<div id="worldView"></div>
+<div class="controls worldControls">
+<button data-move="forward">FORWARD</button>
+<button data-move="left">LEFT</button>
+<button data-move="back">BACK</button>
+<button data-move="right">RIGHT</button>
+</div>
+<div class="note">Hold movement buttons to move. Players in the same Gorilla OS room appear here.</div>
 </section>
 
 <section class="box full">
@@ -1032,11 +1045,13 @@ addEventListener('keyup', event => {
 });
 addEventListener('blur', () => movementKeys.clear());
 
-\n/* PHOTON EVENTS */
+
+/* PHOTON EVENTS */
 
 function attachPhotonEvents(c) {
 
-  c.onEvent(VOICE_SIGNAL, handleVoiceSignal);\n  c.onEvent(PLAYER_MOVE_EVENT, handlePlayerMovement);
+  c.onEvent(VOICE_SIGNAL, handleVoiceSignal);
+  c.onEvent(PLAYER_MOVE_EVENT, handlePlayerMovement);
 
   c.on('roomJoined', () => {
 
