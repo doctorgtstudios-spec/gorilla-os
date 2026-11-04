@@ -986,10 +986,12 @@ async function initGorillaWorld() {
         xrControllers.forEach((controller, index) => {
           const handWorld = new THREE.Vector3();
           controller.getWorldPosition(handWorld);
+          // Undo the virtual-player offset for stable hand velocity measurements.
+          const motionHand = new THREE.Vector3(handWorld.x + localPosition.x, handWorld.y, handWorld.z + localPosition.z);
           const previous = previousHands[index];
           if (previous && handWorld.y < 1.15) {
-            const dx = handWorld.x - previous.x;
-            const dz = handWorld.z - previous.z;
+            const dx = motionHand.x - previous.x;
+            const dz = motionHand.z - previous.z;
             const distance = Math.hypot(dx, dz);
             if (distance > 0.008 && distance < 0.35) {
               localPosition.x -= dx * 1.65;
@@ -1000,7 +1002,7 @@ async function initGorillaWorld() {
               }
             }
           }
-          previousHands[index] = handWorld.clone();
+          previousHands[index] = motionHand;
           const localHand = localAvatar.worldToLocal(handWorld.clone());
           const item = localAvatar.userData.armMeshes[index];
           const shoulder = new THREE.Vector3(item.side * 0.48, 1.38, 0.08);
