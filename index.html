@@ -802,14 +802,14 @@ function renderPlayers() {
 
     muteButton.onclick = () => {
 
-      if (muted.has(player.number)) {
+      if (muted.has(actorNumber(player))) {
         muted.delete(actorNumber(player));
       } else {
         muted.add(actorNumber(player));
       }
 
       const remoteAudio = remoteAudios.get(actorNumber(player));
-      if (remoteAudio) remoteAudio.muted = muted.has(player.number);
+      if (remoteAudio) remoteAudio.muted = muted.has(actorNumber(player));
       renderPlayers();
     };
 
