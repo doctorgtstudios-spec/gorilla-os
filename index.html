@@ -195,12 +195,17 @@ label {
   touch-action:pan-y;
 }
 #worldView canvas {display:block;width:100%;height:100%}
-.worldHud{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:10px}
+.worldTopbar{display:flex;justify-content:space-between;padding:10px 13px;background:#202b43;border:1px solid #52688f;border-radius:8px 8px 0 0;color:#e4ecff;font:bold 12px monospace}
+.worldTopbar span:last-child{color:#9dffad}
+.worldActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.worldActions button{background:#263d68;border:1px solid #5978ad;min-height:44px}
+.worldHud{display:flex;align-items:center;justify-content:flex-start;gap:14px;margin-top:10px}
 .worldPad{display:grid;gap:5px;justify-items:center}
 .worldPad>div{display:flex;gap:5px}
 .worldPad button,.jumpButton{width:62px;height:56px;min-width:62px;min-height:56px;border-radius:14px;background:#304b2d;border:2px solid #66845a;font-size:20px;touch-action:none;user-select:none}
-.jumpButton{width:100px;height:76px;background:#79552e;border-color:#b68a53;font-size:15px}
+.jumpButton{width:100px;height:56px;background:#79552e;border-color:#b68a53;font-size:15px}
 .worldPad button.pressed,.jumpButton.pressed{background:#527c40;transform:scale(.96)}
+#worldView{border-radius:0 0 8px 8px}
 
 </style>
 </head>
@@ -230,12 +235,11 @@ label {
 
 <section class="box full">
 <h3>GORILLA WORLD <span id="worldStatus" class="pill">LOADING</span></h3>
+<div class="worldTopbar"><span>GORILLA FOREST</span><span id="xrState">DESKTOP MODE</span></div>
 <div id="worldView"></div>
-<div class="worldHud">
-<div class="worldPad"><button data-move="forward">▲</button><div><button data-move="left">◀</button><button data-move="back">▼</button><button data-move="right">▶</button></div></div>
-<button id="jumpButton" class="jumpButton">JUMP</button>
-</div>
-<div class="note">Hold a direction to move. Press JUMP or Space. Players in the same room appear here.</div>
+<div class="worldActions"><button id="enterXR">ENTER WEBXR</button><button id="exitXR" disabled>EXIT VR</button><button id="jumpButton" class="jumpButton">JUMP</button></div>
+<div class="worldHud"><div class="worldPad"><button data-move="forward">▲</button><div><button data-move="left">◀</button><button data-move="back">▼</button><button data-move="right">▶</button></div></div></div>
+<div class="note">Hold a direction to move. In VR, use both controllers to pose your gorilla arms. Requires WebXR support.</div>
 </section>
 
 <section class="box full">
@@ -845,6 +849,7 @@ async function initGorillaWorld() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.shadowMap.enabled = true;
+    renderer.xr.enabled = true;
     host.replaceChildren(renderer.domElement);
 
     scene.add(new THREE.HemisphereLight(0xd9ffe0, 0x35402b, 2));
@@ -896,6 +901,16 @@ async function initGorillaWorld() {
       body.scale.set(0.85, 1.05, 0.7);
       body.position.y = 1.05;
       group.add(body);
+      group.userData.armMeshes = [];
+      for (const side of [-1, 1]) {
+        const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.17, 1, 10), fur);
+        const hand = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 8), dark);
+        arm.position.set(side * 0.48, 0.95, 0.08);
+        arm.rotation.z = side * -0.5;
+        hand.position.set(side * 0.8, 0.48, 0.2);
+        group.add(arm, hand);
+        group.userData.armMeshes.push({arm, hand, side});
+      }
       const head = new THREE.Mesh(new THREE.SphereGeometry(0.38, 16, 12), fur);
       head.position.set(0, 1.68, 0.02);
       group.add(head);
@@ -917,6 +932,8 @@ async function initGorillaWorld() {
     };
 
     world3D = { THREE, scene, camera, renderer, makeAvatar };
+    const xrControllers = [renderer.xr.getController(0), renderer.xr.getController(1)];
+    xrControllers.forEach(controller => scene.add(controller));
     localAvatar = makeAvatar(0x70df78);
     localAvatar.position.set(0, 0, 0);
 
@@ -931,7 +948,7 @@ async function initGorillaWorld() {
     resize();
 
     const animate = () => {
-      requestAnimationFrame(animate);
+      if (!renderer.xr.isPresenting) requestAnimationFrame(animate);
       if (!world3D) return;
       for (const avatar of remoteAvatars.values()) {
         avatar.group.position.lerp(avatar.target, 0.22);
@@ -948,7 +965,49 @@ async function initGorillaWorld() {
       camera.lookAt(focus.x, 1, focus.z);
       renderer.render(scene, camera);
     };
-    animate();
+    renderer.setAnimationLoop(() => {
+      if (renderer.xr.isPresenting && localAvatar) {
+        const xrCamera = renderer.xr.getCamera(camera);
+        const headPos = new THREE.Vector3();
+        xrCamera.getWorldPosition(headPos);
+        localPosition.x = headPos.x;
+        localPosition.z = headPos.z;
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(xrCamera.quaternion);
+        localRotation = Math.atan2(-forward.x, -forward.z);
+        xrControllers.forEach((controller, index) => {
+          const handWorld = new THREE.Vector3();
+          controller.getWorldPosition(handWorld);
+          const localHand = localAvatar.worldToLocal(handWorld.clone());
+          const item = localAvatar.userData.armMeshes[index];
+          const shoulder = new THREE.Vector3(item.side * 0.48, 1.38, 0.08);
+          const delta = localHand.clone().sub(shoulder);
+          item.arm.position.copy(shoulder).add(localHand).multiplyScalar(0.5);
+          item.arm.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), delta.clone().normalize());
+          item.arm.scale.y = Math.max(0.2, delta.length());
+          item.hand.position.copy(localHand);
+        });
+        syncLocalPosition();
+      }
+      animateFrame();
+    });
+    function animateFrame() {
+      for (const avatar of remoteAvatars.values()) {
+        avatar.group.position.lerp(avatar.target, 0.22);
+        const delta = avatar.targetRotation - avatar.group.rotation.y;
+        avatar.group.rotation.y += Math.atan2(Math.sin(delta), Math.cos(delta)) * 0.22;
+      }
+      if (localAvatar && !renderer.xr.isPresenting) {
+        localAvatar.position.set(localPosition.x, performance.now()<jumpUntil?1.25:0, localPosition.z);
+        localAvatar.rotation.y = localRotation;
+      }
+      if (!renderer.xr.isPresenting && localAvatar) {
+        const focus = localAvatar.position;
+        camera.position.x += (focus.x-camera.position.x)*0.035;
+        camera.position.z += (focus.z+11-camera.position.z)*0.035;
+        camera.lookAt(focus.x,1,focus.z);
+      }
+      renderer.render(scene,camera);
+    }
     $('#worldStatus').textContent = 'READY';
     $('#worldStatus').className = 'pill ok';
     log('3D gorilla world ready.');
@@ -957,6 +1016,20 @@ async function initGorillaWorld() {
     log('3D world error: ' + error.message);
   }
 }
+
+async function enterWebXR() {
+  if (!navigator.xr) { $('#xrState').textContent = 'WEBXR UNAVAILABLE'; log('WebXR is unavailable in this browser.'); return; }
+  try {
+    if (!(await navigator.xr.isSessionSupported('immersive-vr'))) { $('#xrState').textContent = 'VR UNSUPPORTED'; return; }
+    const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor','bounded-floor','hand-tracking'] });
+    await world3D.renderer.xr.setSession(session);
+    $('#xrState').textContent = 'VR ACTIVE';
+    $('#enterXR').disabled = true; $('#exitXR').disabled = false;
+    session.addEventListener('end', () => { $('#xrState').textContent = 'DESKTOP MODE'; $('#enterXR').disabled = false; $('#exitXR').disabled = true; });
+  } catch (error) { $('#xrState').textContent = 'XR ERROR'; log('WebXR: ' + error.message); }
+}
+$('#enterXR').addEventListener('click', enterWebXR);
+$('#exitXR').addEventListener('click', () => world3D?.renderer.xr.getSession()?.end());
 
 function getActorNumber(player) {
   return player?.number ?? player?.actorNumber ?? player?.id;
