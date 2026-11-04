@@ -339,7 +339,7 @@ Uses PlayFab authentication and Photon Realtime Core. The leaderboard lists ever
 </div>
 
 <div class="controls">
-  <button type="button" id="downloadUpdateLog">SAVE LOG AS TXT</button>
+  <button type="button" id="downloadUpdateLog">SAVE CONSOLE LOG AS TXT</button>
 </div>
 <div class="note">New Gorilla OS changes will be listed here.</div>
 </section>
@@ -1944,26 +1944,17 @@ $('#newCustomId').addEventListener('click', () => {
   log('New Custom ID generated.');
 });
 
-/* UPDATE LOG EXPORT — redact connection identifiers before saving */
+/* CONSOLE LOG EXPORT — redact private connection identifiers */
 
 $('#downloadUpdateLog').addEventListener('click', () => {
-  const entries = Array.from(document.querySelectorAll('#updates .updateEntry'));
-  let contents = [
-    'GORILLA OS — UPDATE LOG',
-    '========================================',
-    '',
-    ...entries.flatMap(entry => [
-      entry.querySelector('strong')?.textContent?.trim() || 'Update',
-      entry.querySelector('p')?.textContent?.trim() || '',
-      ''
-    ])
-  ].join('\n');
+  let contents = $('#log')?.textContent || '';
 
-  // Never include private service identifiers or authentication values in log.txt.
+  // Keep diagnostics useful while masking private IDs and credentials.
   contents = contents
     .replace(/(PlayFab\\s*Title\\s*ID\\s*[:=]\\s*)[^\\s,;]+/gi, '$1[HIDDEN]')
     .replace(/(Photon(?:\\s+Realtime|\\s+Voice)?\\s+App\\s*ID\\s*[:=]\\s*)[^\\s,;]+/gi, '$1[HIDDEN]')
-    .replace(/((?:Photon\\s*)?(?:auth(?:entication)?\\s*)?token\\s*[:=]\\s*)[^\\s,;]+/gi, '$1[HIDDEN]');
+    .replace(/((?:Photon\\s*)?(?:auth(?:entication)?\\s*)?token\\s*[:=]\\s*)[^\\s,;]+/gi, '$1[HIDDEN]')
+    .replace(/(custom\\s*id\\s*[:=]\\s*)[^\\s,;]+/gi, '$1[HIDDEN]');
 
   const blob = new Blob([contents], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
