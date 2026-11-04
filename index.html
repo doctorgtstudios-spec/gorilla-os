@@ -720,36 +720,45 @@ function currentRoom() {
   return client?.room?.name || '';
 }
 
+// Keep event-delivered player snapshots as a fallback to the live room view.
+// Photon documents room.players as the full room roster; events keep the UI
+// responsive if a particular browser/SDK build briefly returns a stale view.
+const roomRosterCache = new Map();
+
 function players() {
   try {
     const room = client?.room;
     if (!room) return [];
 
-    // Realtime Core v6 exposes room.players as an array of player snapshots,
-    // including the local player. This mirrors Photon PUN's PlayerList usage.
+    const merged = new Map();
+    const addPlayer = player => {
+      if (!player || player.isInactive === true) return;
+      const number = Number(actorNumber(player));
+      if (!Number.isFinite(number)) return;
+      merged.set(number, player);
+    };
+
+    // Live room snapshot is authoritative and includes the local player.
     const roster = room.players;
-    let list = [];
-
     if (Array.isArray(roster)) {
-      list = roster.slice();
+      roster.forEach(addPlayer);
     } else if (roster instanceof Map) {
-      list = Array.from(roster.values());
+      roster.forEach(addPlayer);
     } else if (roster && typeof roster[Symbol.iterator] === 'function') {
-      list = Array.from(roster);
+      for (const player of roster) addPlayer(player);
     } else if (roster && typeof roster === 'object') {
-      list = typeof roster.values === 'function'
-        ? Array.from(roster.values())
-        : Object.values(roster);
+      Object.values(roster).forEach(addPlayer);
     }
 
-    // Include the local snapshot if a particular SDK build omits it.
-    const local = client?.localPlayer;
-    if (local && !list.some(p => Number(actorNumber(p)) === Number(actorNumber(local)))) {
-      list.unshift(local);
-    }
+    // Merge event snapshots only when the live view has not caught up yet.
+    roomRosterCache.forEach((player, number) => {
+      if (!merged.has(number)) addPlayer(player);
+    });
 
-    // Inactive players have disconnected and are not currently online.
-    return list.filter(player => player && player.isInactive !== true);
+    addPlayer(client?.localPlayer);
+    return Array.from(merged.values()).sort(
+      (a, b) => Number(actorNumber(a)) - Number(actorNumber(b))
+    );
   } catch (error) {
     log('Could not read Photon room roster: ' + error.message);
     return client?.localPlayer ? [client.localPlayer] : [];
@@ -908,7 +917,20 @@ function attachPhotonEvents(c) {
 
   c.on('roomJoined', () => {
 
+    roomRosterCache.clear();
     log('Joined room: ' + currentRoom());
+
+    // Seed the roster immediately from Photon’s documented room snapshot.
+    try {
+      for (const player of (c.room?.players || [])) {
+        if (player && Number.isFinite(Number(player.number))) {
+          roomRosterCache.set(Number(player.number), player);
+        }
+      }
+      log('Room roster snapshot: ' + (c.room?.playerCount ?? roomRosterCache.size) + ' player(s).');
+    } catch (error) {
+      log('Roster snapshot read failed: ' + error.message);
+    }
 
     publish();
     renderPlayers();
@@ -922,6 +944,7 @@ function attachPhotonEvents(c) {
   });
 
   c.on('roomLeft', () => {
+    roomRosterCache.clear();
     stopVoice();
 
     log('Left room.');
@@ -933,25 +956,35 @@ function attachPhotonEvents(c) {
 
   c.on('playerJoined', ({player}) => {
 
-    log((player.name || 'A player') + ' joined.');
+    if (player && Number.isFinite(Number(player.number))) {
+      roomRosterCache.set(Number(player.number), player);
+    }
+    log((player?.name || 'A player') + ' joined. Roster: ' + players().length + ' player(s).');
 
     renderPlayers();
-    if (voiceActive) {
+    if (voiceActive && player) {
       const me = c.localPlayer?.number;
       makeVoicePeer(player.number, me < player.number);
     }
   });
 
-  c.on('playerLeft', ({playerNumber}) => {
+  c.on('playerLeft', ({playerNumber, isInactive}) => {
 
-    log('Player ' + playerNumber + ' left.');
+    // A suspended/inactive player is no longer online in the visible roster.
+    roomRosterCache.delete(Number(playerNumber));
+    log('Player ' + playerNumber + (isInactive ? ' became inactive.' : ' left.') );
 
     muted.delete(playerNumber);
     closeVoicePeer(playerNumber);
     renderPlayers();
   });
 
-  c.on('playerPropertiesChanged', () => {
+  c.on('playerPropertiesChanged', ({playerNumber}) => {
+    // Refresh the changed player's snapshot so name/platform properties update.
+    try {
+      const updated = c.room?.getPlayer(Number(playerNumber));
+      if (updated) roomRosterCache.set(Number(playerNumber), updated);
+    } catch {}
     renderPlayers();
   });
 
