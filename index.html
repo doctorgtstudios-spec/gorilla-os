@@ -306,12 +306,8 @@ Run on HTTPS or localhost.
 <script type="module">
 'use strict';
 
-/* LOCAL PHOTON REALTIME CORE */
-
-import {
-  createRealtimeClient,
-  preloadRealtime
-} from './realtimecore.mjs';
+/* PHOTON REALTIME CORE IS LOADED ON CONNECT.
+   The local realtimecore.mjs is only the WASM loader, not the JS API wrapper. */
 
 /* HELPERS */
 
@@ -629,6 +625,24 @@ async function connect() {
   let newClient = null;
 
   try {
+
+    log('Loading Photon Realtime Core JavaScript API...');
+
+    const photonSdk = await import(
+      'https://esm.sh/@photonengine/realtime-core@6.0.1?bundle'
+    );
+
+    const createRealtimeClient = photonSdk.createRealtimeClient;
+    const preloadRealtime = photonSdk.preloadRealtime;
+
+    if (
+      typeof createRealtimeClient !== 'function' ||
+      typeof preloadRealtime !== 'function'
+    ) {
+      throw new Error('Photon SDK module did not provide the expected API.');
+    }
+
+    log('Photon JavaScript API loaded.');
 
     /* PLAYFAB LOGIN */
 
@@ -1364,7 +1378,7 @@ render();
 renderPlayers();
 
 log('Gorilla OS ready.');
-log('Local Photon loader configured.');
+log('Interface initialized.');
 
 </script>
 
