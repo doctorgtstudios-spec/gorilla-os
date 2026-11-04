@@ -161,7 +161,7 @@ label {
 
 .player {
   display:grid;
-  grid-template-columns:18px 1fr auto auto;
+  grid-template-columns:18px minmax(0,1fr) auto auto auto;
   gap:8px;
   align-items:center;
   padding:8px;
@@ -178,34 +178,20 @@ label {
   display:inline-block;
 }
 
+.platformBadge {
+  color:#a5ffad;
+  border:1px solid #426b45;
+  background:#17301b;
+  border-radius:3px;
+  padding:4px 6px;
+  font:10px monospace;
+  text-align:center;
+}
 .player button {
   min-width:55px;
   min-height:30px;
   font-size:10px;
 }
-
-#worldView {
-  width:100%;
-  height: min(55vh, 430px);
-  min-height:260px;
-  overflow:hidden;
-  border:2px solid #354832;
-  border-radius:6px;
-  background:#101b13;
-  touch-action:pan-y;
-}
-#worldView canvas {display:block;width:100%;height:100%}
-.worldTopbar{display:flex;justify-content:space-between;padding:10px 13px;background:#202b43;border:1px solid #52688f;border-radius:8px 8px 0 0;color:#e4ecff;font:bold 12px monospace}
-.worldTopbar span:last-child{color:#9dffad}
-.worldActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-.worldActions button{background:#263d68;border:1px solid #5978ad;min-height:44px}
-.worldHud{display:flex;align-items:center;justify-content:flex-start;gap:14px;margin-top:10px}
-.worldPad{display:grid;gap:5px;justify-items:center}
-.worldPad>div{display:flex;gap:5px}
-.worldPad button,.jumpButton{width:62px;height:56px;min-width:62px;min-height:56px;border-radius:14px;background:#304b2d;border:2px solid #66845a;font-size:20px;touch-action:none;user-select:none}
-.jumpButton{width:100px;height:56px;background:#79552e;border-color:#b68a53;font-size:15px}
-.worldPad button.pressed,.jumpButton.pressed{background:#527c40;transform:scale(.96)}
-#worldView{border-radius:0 0 8px 8px}
 
 </style>
 </head>
@@ -234,18 +220,9 @@ label {
 </section>
 
 <section class="box full">
-<h3>GORILLA WORLD <span id="worldStatus" class="pill">LOADING</span></h3>
-<div class="worldTopbar"><span>GORILLA FOREST</span><span id="xrState">DESKTOP MODE</span></div>
-<div id="worldView"></div>
-<div class="worldActions"><button id="enterXR">ENTER WEBXR</button><button id="exitXR" disabled>EXIT VR</button><button id="jumpButton" class="jumpButton">JUMP</button></div>
-<div class="worldHud"><div class="worldPad"><button data-move="forward">▲</button><div><button data-move="left">◀</button><button data-move="back">▼</button><button data-move="right">▶</button></div></div></div>
-<div class="note">Hold a direction to move. In VR, use both controllers to pose your gorilla arms. Requires WebXR support.</div>
-</section>
-
-<section class="box full">
-<h3>ROOM PLAYERS <span id="count" class="pill">0</span></h3>
+<h3>ROOM LEADERBOARD <span id="count" class="pill">0</span></h3>
 <div id="leaderboard">
-  <div class="note">Not in a room.</div>
+  <div class="note">Join a room to see everyone connected.</div>
 </div>
 <div class="controls">
 <button id="voiceStart">START VOICE</button>
@@ -314,7 +291,7 @@ label {
 </div>
 
 <div class="note">
-Uses PlayFab authentication and Photon Realtime Core. Browser-to-browser voice uses WebRTC over your Photon room for signaling. Both players must join the same room and press START VOICE, then allow microphone access. This does not connect to VR voice.
+Uses PlayFab authentication and Photon Realtime Core. The leaderboard lists everyone connected to the same Gorilla OS room. QUEST marks players using Quest Browser; WEB marks other browsers. Browser-to-browser voice uses WebRTC over your Photon room for signaling.
 </div>
 
 <div id="log"></div>
@@ -725,6 +702,10 @@ function actorColor(player) {
 
 /* PLAYER SETTINGS */
 
+function playerPlatform() {
+  return /OculusBrowser|Quest/i.test(navigator.userAgent) ? 'QUEST' : 'WEB';
+}
+
 function publish() {
 
   if (!client || !isJoined()) return;
@@ -736,7 +717,8 @@ function publish() {
     client.setPlayerProperties({
       color: rgb.join(','),
       pfid: playFabId || '',
-      gameMode: gameMode
+      gameMode: gameMode,
+      platform: playerPlatform()
     });
 
   } catch(error) {
@@ -782,6 +764,12 @@ function renderPlayers() {
     const playerName = document.createElement('span');
     playerName.textContent = actorName(player);
 
+    const platform = document.createElement('span');
+    platform.className = 'platformBadge';
+    platform.textContent = player.customProperties?.platform === 'QUEST'
+      ? 'QUEST'
+      : 'WEB';
+
     const muteButton = document.createElement('button');
 
     muteButton.textContent =
@@ -812,6 +800,7 @@ function renderPlayers() {
     row.append(
       swatch,
       playerName,
+      platform,
       muteButton,
       you
     );
@@ -821,384 +810,11 @@ function renderPlayers() {
 }
 
 
-/* GORILLA 3D WORLD AND POSITION SYNC */
-const PLAYER_MOVE_EVENT = 43;
-let world3D = null;
-let localPosition = { x: 0, y: 0, z: 0 };
-let localRotation = 0;
-let localAvatar = null;
-const remoteAvatars = new Map();
-const movementKeys = new Set();
-let lastMoveSend = 0;
-
-function worldColor(player) {
-  const values = String(player?.customProperties?.color || '0,8,0').split(',').map(v => Math.max(0, Math.min(9, Number(v) || 0)));
-  return (values[0] * 28 << 16) | (values[1] * 28 << 8) | (values[2] * 28);
-}
-
-async function initGorillaWorld() {
-  const host = $('#worldView');
-  try {
-    const THREE = await import('https://esm.sh/three@0.160.0');
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x17251a);
-    scene.fog = new THREE.Fog(0x17251a, 18, 42);
-    const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
-    camera.position.set(0, 7, 11);
-    camera.lookAt(0, 1, 0);
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
-    renderer.shadowMap.enabled = true;
-    renderer.xr.enabled = true;
-    host.replaceChildren(renderer.domElement);
-
-    scene.add(new THREE.HemisphereLight(0xd9ffe0, 0x35402b, 2));
-    const sun = new THREE.DirectionalLight(0xffffff, 2.2);
-    sun.position.set(5, 10, 6);
-    sun.castShadow = true;
-    scene.add(sun);
-
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(100, 100),
-      new THREE.MeshStandardMaterial({ color: 0x34533a, roughness: 1 })
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.04;
-    floor.receiveShadow = true;
-    scene.add(floor);
-    const grid = new THREE.GridHelper(100, 50, 0x527b50, 0x3e6140);
-    grid.position.y = 0.005;
-    scene.add(grid);
-    const trunkMat = new THREE.MeshStandardMaterial({color:0x60432b,roughness:1});
-    const leafMats = [0x245b32,0x347a3d,0x4b9146].map(color=>new THREE.MeshStandardMaterial({color,roughness:1}));
-    const rockMat = new THREE.MeshStandardMaterial({color:0x687264,roughness:1});
-    const addTree = (x,z,s=1,v=0) => {
-      const g = new THREE.Group();
-      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.22*s,.34*s,3.1*s,7),trunkMat);
-      trunk.position.y=1.55*s; g.add(trunk);
-      for(let i=0;i<3;i++){
-        const crown=new THREE.Mesh(new THREE.IcosahedronGeometry((1.25-i*.12)*s,1),leafMats[(v+i)%3]);
-        crown.position.set((i-1)*.28*s,(3+i*.62)*s,(i%2)*.18*s); g.add(crown);
-      }
-      g.position.set(x,0,z); g.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}}); scene.add(g);
-    };
-    [[-9,-7,1.2,0],[-7,3,1.05,1],[-11,8,1.3,2],[-4,-12,1.1,1],[2,-13,1.25,0],[9,-10,1.2,2],[12,-3,1.35,1],[10,7,1.15,0],[5,12,1.25,2],[-3,11,1.1,1],[-13,-1,1.1,2],[14,11,1.25,0]].forEach(v=>addTree(v[0],v[1],v[2],v[3]));
-    [[-6,.45,5],[7,.55,3],[-10,.4,-9],[11,.5,-8],[4,.35,-5]].forEach((p,i)=>{
-      const rock=new THREE.Mesh(new THREE.DodecahedronGeometry(.75+(i%2)*.25),rockMat);
-      rock.position.set(p[0],p[1],p[2]); rock.scale.set(1.2,.8,1); rock.castShadow=true; scene.add(rock);
-    });
-    [[-3,-4,.55],[3,-5,.8],[-2,4,.65],[5,1,.7]].forEach(p=>{
-      const stump=new THREE.Mesh(new THREE.CylinderGeometry(.75,.82,p[2],10),trunkMat);
-      stump.position.set(p[0],p[2]/2,p[1]); stump.castShadow=true; scene.add(stump);
-    });
-
-
-    const makeAvatar = (color) => {
-      const group = new THREE.Group();
-      const fur = new THREE.MeshStandardMaterial({ color, roughness: 0.9 });
-      const dark = new THREE.MeshStandardMaterial({ color: 0x29251f, roughness: 1 });
-      const body = new THREE.Mesh(new THREE.SphereGeometry(0.48, 16, 12), fur);
-      body.scale.set(0.85, 1.05, 0.7);
-      body.position.y = 1.05;
-      body.userData.hideInFirstPerson = true;
-      group.add(body);
-      group.userData.armMeshes = [];
-      for (const side of [-1, 1]) {
-        const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.17, 1, 10), fur);
-        const hand = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 8), dark);
-        arm.position.set(side * 0.48, 0.95, 0.08);
-        arm.rotation.z = side * -0.5;
-        hand.position.set(side * 0.8, 0.48, 0.2);
-        group.add(arm, hand);
-        group.userData.armMeshes.push({arm, hand, side});
-      }
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.38, 16, 12), fur);
-      head.position.set(0, 1.68, 0.02);
-      head.userData.hideInFirstPerson = true;
-      group.add(head);
-      for (const side of [-1, 1]) {
-        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 8), dark);
-        eye.position.set(side * 0.14, 1.73, 0.35);
-        group.add(eye);
-      }
-      group.userData.headBody = group.children.filter(obj => obj.userData.hideInFirstPerson);
-      group.traverse(obj => { if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; } });
-      scene.add(group);
-      return group;
-    };
-
-    world3D = { THREE, scene, camera, renderer, makeAvatar };
-    const xrControllers = [renderer.xr.getController(0), renderer.xr.getController(1)];
-    xrControllers.forEach(controller => scene.add(controller));
-    localAvatar = makeAvatar(0x70df78);
-    localAvatar.position.set(0, 0, 0);
-
-    const resize = () => {
-      const width = Math.max(1, host.clientWidth);
-      const height = Math.max(1, host.clientHeight);
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-      renderer.setSize(width, height, false);
-    };
-    new ResizeObserver(resize).observe(host);
-    resize();
-
-    const animate = () => {
-      if (!renderer.xr.isPresenting) requestAnimationFrame(animate);
-      if (!world3D) return;
-      for (const avatar of remoteAvatars.values()) {
-        avatar.group.position.lerp(avatar.target, 0.22);
-        const delta = avatar.targetRotation - avatar.group.rotation.y;
-        avatar.group.rotation.y += Math.atan2(Math.sin(delta), Math.cos(delta)) * 0.22;
-        if (avatar.armTargets && world3D) avatar.armTargets.forEach((point,index) => {
-          if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) return;
-          const item = avatar.group.userData.armMeshes[index];
-          if (!item) return;
-          const hand = new world3D.THREE.Vector3(point.x,point.y,point.z);
-          item.hand.position.lerp(hand,0.3);
-          const shoulder = new world3D.THREE.Vector3(item.side*0.48,1.38,0.08);
-          const armDelta = item.hand.position.clone().sub(shoulder);
-          item.arm.position.copy(shoulder).add(item.hand.position).multiplyScalar(0.5);
-          item.arm.quaternion.setFromUnitVectors(new world3D.THREE.Vector3(0,1,0),armDelta.clone().normalize());
-          item.arm.scale.y=Math.max(0.2,armDelta.length());
-        });
-      }
-      if (localAvatar) {
-        localAvatar.position.set(localPosition.x, performance.now()<jumpUntil?1.25:0, localPosition.z);
-        localAvatar.rotation.y = localRotation;
-      }
-      const focus = localAvatar ? localAvatar.position : new THREE.Vector3();
-      camera.position.x += (focus.x - camera.position.x) * 0.035;
-      camera.position.z += (focus.z + 11 - camera.position.z) * 0.035;
-      camera.lookAt(focus.x, 1, focus.z);
-      renderer.render(scene, camera);
-    };
-    let xrBaseSpace = null;
-    const previousHands = [null, null];
-    renderer.xr.addEventListener('sessionstart', () => { xrBaseSpace = renderer.xr.getReferenceSpace(); previousHands[0]=null; previousHands[1]=null; });
-    renderer.xr.addEventListener('sessionend', () => { xrBaseSpace = null; previousHands[0]=null; previousHands[1]=null; });
-    renderer.setAnimationLoop(() => {
-      if (renderer.xr.isPresenting && localAvatar) {
-        if (!xrBaseSpace) xrBaseSpace = renderer.xr.getReferenceSpace();
-        const xrCamera = renderer.xr.getCamera(camera);
-        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(xrCamera.quaternion);
-        localRotation = Math.atan2(-forward.x, -forward.z);
-        xrControllers.forEach((controller, index) => {
-          const handWorld = new THREE.Vector3();
-          controller.getWorldPosition(handWorld);
-          // Undo the virtual-player offset for stable hand velocity measurements.
-          const motionHand = new THREE.Vector3(handWorld.x + localPosition.x, handWorld.y, handWorld.z + localPosition.z);
-          const previous = previousHands[index];
-          if (previous && handWorld.y < 1.15) {
-            const dx = motionHand.x - previous.x;
-            const dz = motionHand.z - previous.z;
-            const distance = Math.hypot(dx, dz);
-            if (distance > 0.008 && distance < 0.35) {
-              localPosition.x -= dx * 1.65;
-              localPosition.z -= dz * 1.65;
-              if (xrBaseSpace && typeof XRRigidTransform !== 'undefined') {
-                const offset = new XRRigidTransform({position:{x:-localPosition.x,y:0,z:-localPosition.z}});
-                renderer.xr.setReferenceSpace(xrBaseSpace.getOffsetReferenceSpace(offset));
-              }
-            }
-          }
-          previousHands[index] = motionHand;
-          const localHand = localAvatar.worldToLocal(handWorld.clone());
-          const item = localAvatar.userData.armMeshes[index];
-          const shoulder = new THREE.Vector3(item.side * 0.48, 1.38, 0.08);
-          const delta = localHand.clone().sub(shoulder);
-          item.arm.position.copy(shoulder).add(localHand).multiplyScalar(0.5);
-          item.arm.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), delta.clone().normalize());
-          item.arm.scale.y = Math.max(0.2, delta.length());
-          item.hand.position.copy(localHand);
-        });
-        syncLocalPosition();
-      }
-      animateFrame();
-    });
-    function animateFrame() {
-      for (const avatar of remoteAvatars.values()) {
-        avatar.group.position.lerp(avatar.target, 0.22);
-        const delta = avatar.targetRotation - avatar.group.rotation.y;
-        avatar.group.rotation.y += Math.atan2(Math.sin(delta), Math.cos(delta)) * 0.22;
-        if (avatar.armTargets && world3D) avatar.armTargets.forEach((point,index) => {
-          if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) return;
-          const item = avatar.group.userData.armMeshes[index];
-          if (!item) return;
-          const hand = new THREE.Vector3(point.x,point.y,point.z);
-          item.hand.position.lerp(hand,0.3);
-          const shoulder = new THREE.Vector3(item.side*0.48,1.38,0.08);
-          const armDelta = item.hand.position.clone().sub(shoulder);
-          item.arm.position.copy(shoulder).add(item.hand.position).multiplyScalar(0.5);
-          item.arm.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),armDelta.clone().normalize());
-          item.arm.scale.y=Math.max(0.2,armDelta.length());
-        });
-      }
-      if (localAvatar) {
-        localAvatar.position.set(localPosition.x, renderer.xr.isPresenting ? 0 : (performance.now()<jumpUntil?1.25:0), localPosition.z);
-        localAvatar.rotation.y = localRotation;
-        localAvatar.userData.headBody.forEach(mesh => { mesh.visible = !renderer.xr.isPresenting; });
-      }
-      if (!renderer.xr.isPresenting && localAvatar) {
-        const focus = localAvatar.position;
-        camera.position.x += (focus.x-camera.position.x)*0.035;
-        camera.position.z += (focus.z+11-camera.position.z)*0.035;
-        camera.lookAt(focus.x,1,focus.z);
-      }
-      renderer.render(scene,camera);
-    }
-    $('#worldStatus').textContent = 'READY';
-    $('#worldStatus').className = 'pill ok';
-    log('3D gorilla world ready.');
-  } catch (error) {
-    $('#worldStatus').textContent = 'UNAVAILABLE';
-    log('3D world error: ' + error.message);
-  }
-}
-
-async function enterWebXR() {
-  if (!navigator.xr) { $('#xrState').textContent = 'WEBXR UNAVAILABLE'; log('WebXR is unavailable in this browser.'); return; }
-  try {
-    if (!(await navigator.xr.isSessionSupported('immersive-vr'))) { $('#xrState').textContent = 'VR UNSUPPORTED'; return; }
-    const session = await navigator.xr.requestSession('immersive-vr', { requiredFeatures: ['local-floor'], optionalFeatures: ['bounded-floor','hand-tracking'] });
-    await world3D.renderer.xr.setSession(session);
-    $('#xrState').textContent = 'VR ACTIVE';
-    $('#enterXR').disabled = true; $('#exitXR').disabled = false;
-    session.addEventListener('end', () => { $('#xrState').textContent = 'DESKTOP MODE'; $('#enterXR').disabled = false; $('#exitXR').disabled = true; });
-  } catch (error) { $('#xrState').textContent = 'XR ERROR'; log('WebXR: ' + error.message); }
-}
-$('#enterXR').addEventListener('click', enterWebXR);
-$('#exitXR').addEventListener('click', () => world3D?.renderer.xr.getSession()?.end());
-
-function getActorNumber(player) {
-  return player?.number ?? player?.actorNumber ?? player?.id;
-}
-
-function syncLocalPosition() {
-  if (!client?.isConnected || !isJoined()) return;
-  const now = performance.now();
-  if (now - lastMoveSend < 90) return;
-  lastMoveSend = now;
-  try {
-    client.sendEvent(PLAYER_MOVE_EVENT, {
-      x: Math.round(localPosition.x * 100) / 100,
-      z: Math.round(localPosition.z * 100) / 100,
-      rotation: Math.round(localRotation * 100) / 100,
-      leftArm: localAvatar?.userData?.armMeshes?.[0]?.hand ? {x:localAvatar.userData.armMeshes[0].hand.position.x,y:localAvatar.userData.armMeshes[0].hand.position.y,z:localAvatar.userData.armMeshes[0].hand.position.z} : null,
-      rightArm: localAvatar?.userData?.armMeshes?.[1]?.hand ? {x:localAvatar.userData.armMeshes[1].hand.position.x,y:localAvatar.userData.armMeshes[1].hand.position.y,z:localAvatar.userData.armMeshes[1].hand.position.z} : null,
-      color: rgb.join(','),
-      name
-    }, { reliable: false });
-  } catch (error) {
-    log('Movement sync: ' + error.message);
-  }
-}
-
-function handlePlayerMovement({ senderNumber, data }) {
-  if (!data || senderNumber == null || senderNumber === client?.localPlayer?.number) return;
-  if (![data.x, data.z, data.rotation].every(value => Number.isFinite(Number(value)))) return;
-  let avatar = remoteAvatars.get(senderNumber);
-  if (!avatar && world3D) {
-    const player = players().find(item => getActorNumber(item) === senderNumber);
-    const group = world3D.makeAvatar(player ? worldColor(player) : 0x8dff9a);
-    avatar = { group, target: new world3D.THREE.Vector3(), targetRotation: 0, armTargets: [null,null] };
-    remoteAvatars.set(senderNumber, avatar);
-  }
-  if (!avatar) return;
-  avatar.target.set(Number(data.x), 0, Number(data.z));
-  avatar.targetRotation = Number(data.rotation);
-  avatar.armTargets = [data.leftArm, data.rightArm];
-  if (data.color && world3D) {
-    const channels = String(data.color).split(',').map(v => Math.max(0, Math.min(9, Number(v) || 0)));
-    const color = new world3D.THREE.Color((channels[0]*28)/255, (channels[1]*28)/255, (channels[2]*28)/255);
-    avatar.group.traverse(obj => {
-      if (obj.isMesh && obj.material?.color && obj.geometry?.type !== 'SphereGeometry') obj.material.color.copy(color);
-    });
-  }
-}
-
-function removeRemoteAvatar(playerNumber) {
-  const avatar = remoteAvatars.get(playerNumber);
-  if (avatar && world3D) {
-    world3D.scene.remove(avatar.group);
-    avatar.group.traverse(obj => {
-      if (obj.geometry) obj.geometry.dispose();
-      if (obj.material) obj.material.dispose();
-    });
-  }
-  remoteAvatars.delete(playerNumber);
-}
-
-function clearRemoteAvatars() {
-  [...remoteAvatars.keys()].forEach(removeRemoteAvatar);
-}
-
-function moveLocalPlayer() {
-  if (!localAvatar || !isJoined()) return;
-  let dx = 0, dz = 0;
-  if (movementKeys.has('left')) dx -= 1;
-  if (movementKeys.has('right')) dx += 1;
-  if (movementKeys.has('forward')) dz -= 1;
-  if (movementKeys.has('back')) dz += 1;
-  const length = Math.hypot(dx, dz);
-  if (length) {
-    dx /= length; dz /= length;
-    const speed = 0.11;
-    localPosition.x += dx * speed;
-    localPosition.z += dz * speed;
-    localRotation = Math.atan2(dx, dz);
-  }
-  // Heartbeat keeps stationary players visible to people who join later.
-  syncLocalPosition();
-}
-
-setInterval(moveLocalPlayer, 30);
-
-document.querySelectorAll('[data-move]').forEach(button => {
-  const key = button.dataset.move;
-  const release = event => {
-    event.preventDefault();
-    movementKeys.delete(key);
-    button.classList.remove('pressed');
-  };
-  button.addEventListener('pointerdown', event => {
-    event.preventDefault();
-    movementKeys.add(key);
-    button.classList.add('pressed');
-    button.setPointerCapture?.(event.pointerId);
-  });
-  button.addEventListener('pointerup', release);
-  button.addEventListener('pointercancel', release);
-  button.addEventListener('lostpointercapture', release);
-});
-
-addEventListener('keydown', event => {
-  if (/INPUT|SELECT|TEXTAREA/.test(event.target.tagName)) return;
-  const map = { ArrowUp:'forward', w:'forward', ArrowDown:'back', s:'back', ArrowLeft:'left', a:'left', ArrowRight:'right', d:'right' };
-  const key = map[event.key] || map[event.key.toLowerCase()];
-  if (key) { movementKeys.add(key); event.preventDefault(); }
-});
-addEventListener('keyup', event => {
-  const map = { ArrowUp:'forward', w:'forward', ArrowDown:'back', s:'back', ArrowLeft:'left', a:'left', ArrowRight:'right', d:'right' };
-  const key = map[event.key] || map[event.key.toLowerCase()];
-  if (key) movementKeys.delete(key);
-});
-addEventListener('blur', () => movementKeys.clear());
-
-let jumpUntil = 0;
-function triggerJump(){ if(localAvatar) jumpUntil=performance.now()+420; }
-$('#jumpButton').addEventListener('pointerdown',e=>{e.preventDefault();$('#jumpButton').classList.add('pressed');triggerJump();});
-['pointerup','pointercancel','lostpointercapture'].forEach(n=>$('#jumpButton').addEventListener(n,()=>$('#jumpButton').classList.remove('pressed')));
-addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();triggerJump();}});
-
-
-
 /* PHOTON EVENTS */
 
 function attachPhotonEvents(c) {
 
   c.onEvent(VOICE_SIGNAL, handleVoiceSignal);
-  c.onEvent(PLAYER_MOVE_EVENT, handlePlayerMovement);
 
   c.on('roomJoined', () => {
 
@@ -2109,7 +1725,6 @@ $('#newCustomId').addEventListener('click', () => {
 });
 
 /* INITIALIZE */
-initGorillaWorld();
 
 /* Keep the leaderboard synced with the live Photon room roster. */
 setInterval(() => {
