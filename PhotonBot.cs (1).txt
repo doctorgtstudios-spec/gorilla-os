@@ -1,0 +1,393 @@
+﻿using System.Collections;
+using System.Collections.Generic;
+using System.Text;
+using UnityEngine;
+using Photon.Realtime;
+using ExitGames.Client.Photon;
+#if PHOTON_UNITY_NETWORKING
+using Photon.Pun;
+#endif
+
+public class PhotonBot : MonoBehaviour
+{
+    [Header("Made by wsgmoca")]
+    [Range(1, 512)] public int botCount = 275;
+    public float connectInterval = 0.245f;
+    private string botNamePrefix = "";
+    public string customBotName = "";
+    public bool enableCustomBotName;
+    private bool joinSameRoom = true;
+    private bool waitForMainClientInRoom = true;
+    private byte roomMaxPlayers = 255;
+    private readonly List<BotClient> bots = new();
+    private Coroutine routine;
+
+    private void OnEnable()
+    {
+        Debug.Log($"[{nameof(PhotonBot)}] OnEnable()");
+        routine = StartCoroutine(BootstrapAndSpawn());
+    }
+
+    private void OnDisable()
+    {
+        Debug.Log($"[{nameof(PhotonBot)}] OnDisable() - stopping bots");
+        if (routine != null) StopCoroutine(routine);
+        routine = null;
+        for (int i = 0; i < bots.Count; i++)
+            bots[i].Dispose();
+        bots.Clear();
+    }
+
+    private void Update()
+    {
+        if (enableCustomBotName)
+        {
+            botNamePrefix = customBotName;
+        }
+        else
+        {
+            botNamePrefix = "gorilla" + Random.Range(0, 9999).ToString().PadLeft(4, '0');
+        }
+        for (int i = 0; i < bots.Count; i++)
+        {
+            bots[i].Service();
+        }
+    }
+    private IEnumerator BootstrapAndSpawn()
+    {
+        Debug.Log($"[{nameof(PhotonBot)}] Main PhotonNetwork status:");
+        Debug.Log($"  OfflineMode: {PhotonNetwork.OfflineMode}");
+        Debug.Log($"  IsConnected: {PhotonNetwork.IsConnected}");
+        Debug.Log($"  IsConnectedAndReady: {PhotonNetwork.IsConnectedAndReady}");
+        Debug.Log($"  InRoom: {PhotonNetwork.InRoom}");
+        Debug.Log($"  GameVersion (AppVersion): {PhotonNetwork.GameVersion}");
+        Debug.Log($"  CloudRegion: {PhotonNetwork.CloudRegion}");
+        Debug.Log($"  ServerSettings.FixedRegion: {PhotonNetwork.PhotonServerSettings?.AppSettings?.FixedRegion}");
+        if (PhotonNetwork.OfflineMode)
+        {
+            Debug.LogWarning($"[{nameof(PhotonBot)}] PhotonNetwork.OfflineMode is true. Bots won't appear to an offline main client.");
+        }
+        if (waitForMainClientInRoom)
+        {
+            Debug.Log($"[{nameof(PhotonBot)}] Waiting for PhotonNetwork to be connected and in-room...");
+            while (!PhotonNetwork.IsConnectedAndReady || !PhotonNetwork.InRoom)
+                yield return null;
+        }
+        else
+        {
+            Debug.LogWarning($"[{nameof(PhotonBot)}] Not waiting for main client room; bots may pick different region/appVersion if main isn't ready.");
+        }
+        var appSettings = BuildSettingsFromMainClient();
+        var lobby = TypedLobby.Default;
+        var roomName = (joinSameRoom && PhotonNetwork.InRoom && PhotonNetwork.CurrentRoom != null)
+            ? PhotonNetwork.CurrentRoom.Name
+            : null;
+        Debug.Log($"[{nameof(PhotonBot)}] Runtime config for bots:");
+        Debug.Log($"  AppIdRealtime: {MaskAppId(appSettings.AppIdRealtime)}");
+        Debug.Log($"  AppVersion:    {appSettings.AppVersion}");
+        Debug.Log($"  FixedRegion:   {(string.IsNullOrEmpty(appSettings.FixedRegion) ? "<auto/best>" : appSettings.FixedRegion)}");
+        Debug.Log($"  RoomName:      {(string.IsNullOrEmpty(roomName) ? "<none>" : roomName)}");
+        if (joinSameRoom && string.IsNullOrEmpty(roomName))
+        {
+            Debug.LogWarning($"[{nameof(PhotonBot)}] joinSameRoom is true but main client isn't in a room, so bots can't mirror your room name yet.");
+        }
+        Debug.Log($"[{nameof(PhotonBot)}] Spawning {botCount} bots...");
+        for (int i = 0; i < botCount; i++)
+        {
+            string botId = $"{botNamePrefix}{i + 1:00}";
+            Debug.Log($"[{nameof(PhotonBot)}] Creating bot {botId}");
+            var bot = new BotClient(
+                botId: botId,
+                settings: appSettings,
+                lobby: lobby,
+                roomName: roomName,
+                joinRoom: joinSameRoom && !string.IsNullOrEmpty(roomName),
+                roomMaxPlayers: roomMaxPlayers
+            );
+            bots.Add(bot);
+            Debug.Log($"[{nameof(PhotonBot)}] {botId} -> Connect()");
+            bot.Connect();
+            if (connectInterval > 0f) yield return new WaitForSeconds(connectInterval);
+            else yield return null;
+        }
+
+        Debug.Log($"[{nameof(PhotonBot)}] Done spawning bots.");
+    }
+
+#if PHOTON_UNITY_NETWORKING
+    private static AppSettings BuildSettingsFromMainClient()
+    {
+        var serverSettings = PhotonNetwork.PhotonServerSettings;
+        if (serverSettings == null)
+        {
+            Debug.LogError("[PhotonBot] PhotonServerSettings is null.");
+            return null;
+        }
+        var src = serverSettings.AppSettings;
+        string appVersion = null;
+        try
+        {
+            // PhotonNetwork.NetworkingClient exists in PUN2
+            appVersion = PhotonNetwork.NetworkingClient?.AppVersion;
+        }
+        catch {}
+        if (string.IsNullOrEmpty(appVersion))
+            appVersion = !string.IsNullOrEmpty(src.AppVersion) ? src.AppVersion : PhotonNetwork.GameVersion;
+        string region = PhotonNetwork.CloudRegion;
+        if (!string.IsNullOrEmpty(region))
+        {
+            int slash = region.IndexOf('/');
+            if (slash > 0) region = region.Substring(0, slash);
+        }
+        else
+        {
+            region = src.FixedRegion; // could be empty -> best region
+        }
+        var settings = new AppSettings
+        {
+            AppIdRealtime = src.AppIdRealtime,
+            AppVersion = appVersion,
+            UseNameServer = true,
+            FixedRegion = region,
+            EnableLobbyStatistics = src.EnableLobbyStatistics,
+            NetworkLogging = src.NetworkLogging,
+            Protocol = src.Protocol
+        };
+        return settings;
+    }
+#endif
+
+    private static string MaskAppId(string appId)
+    {
+        if (string.IsNullOrEmpty(appId)) return "<empty>";
+        if (appId.Length <= 6) return "******";
+        return appId.Substring(0, 3) + "..." + appId.Substring(appId.Length - 3);
+    }
+
+    private sealed class BotClient :
+        IConnectionCallbacks,
+        ILobbyCallbacks,
+        IMatchmakingCallbacks,
+        IInRoomCallbacks
+    {
+        private readonly string botId;
+        private readonly AppSettings settings;
+        private readonly TypedLobby lobby;
+        private readonly string roomName;
+        private readonly bool joinRoom;
+        private readonly byte roomMaxPlayers;
+        private readonly LoadBalancingClient client;
+        public BotClient(string botId, AppSettings settings, TypedLobby lobby, string roomName, bool joinRoom, byte roomMaxPlayers)
+        {
+            string guidUserId = System.Guid.NewGuid().ToString();
+            this.botId = botId;
+            this.settings = settings;
+            this.lobby = lobby ?? TypedLobby.Default;
+            this.roomName = roomName;
+            this.joinRoom = joinRoom;
+            this.roomMaxPlayers = roomMaxPlayers;
+            client = new LoadBalancingClient();
+            client.AddCallbackTarget(this);
+            client.AuthValues = new AuthenticationValues { UserId = guidUserId };
+            client.NickName = botId;
+            Log($"Created. NickName={client.NickName} Auth.UserId={client.AuthValues?.UserId} joinRoom={joinRoom} roomName={roomName}");
+        }
+        public void Connect()
+        {
+            Log($"ConnectUsingSettings() AppVersion={settings.AppVersion} FixedRegion={(string.IsNullOrEmpty(settings.FixedRegion) ? "<auto/best>" : settings.FixedRegion)} AppIdRealtime={Mask(settings.AppIdRealtime)}");
+            bool sent = client.ConnectUsingSettings(settings);
+            Log($"ConnectUsingSettings() sent={sent} State={client.State}");
+        }
+        public void Service() => client?.Service();
+
+        public void Dispose()
+        {
+            Log($"Dispose() State={client.State} IsConnected={client.IsConnected}");
+            if (client.IsConnected)
+            {
+                Log("Disconnect()");
+                client.Disconnect();
+            }
+            client.RemoveCallbackTarget(this);
+        }
+
+        private void Log(string msg)
+        {
+            string uid = client?.UserId ?? client?.AuthValues?.UserId ?? "<uid?>";
+            string nn = client?.NickName ?? "<nick?>";
+            string st = client != null ? client.State.ToString() : "<no-client>";
+            Debug.Log($"[BOT {botId}] [Nick={nn}] [UserId={uid}] [State={st}] {msg}");
+        }
+
+        private void LogWarn(string msg)
+        {
+            string uid = client?.UserId ?? client?.AuthValues?.UserId ?? "<uid?>";
+            string nn = client?.NickName ?? "<nick?>";
+            string st = client != null ? client.State.ToString() : "<no-client>";
+            Debug.LogWarning($"[BOT {botId}] [Nick={nn}] [UserId={uid}] [State={st}] {msg}");
+        }
+
+        private void LogError(string msg)
+        {
+            string uid = client?.UserId ?? client?.AuthValues?.UserId ?? "<uid?>";
+            string nn = client?.NickName ?? "<nick?>";
+            string st = client != null ? client.State.ToString() : "<no-client>";
+            Debug.LogError($"[BOT {botId}] [Nick={nn}] [UserId={uid}] [State={st}] {msg}");
+        }
+
+        private static string Mask(string appId)
+        {
+            if (string.IsNullOrEmpty(appId)) return "<empty>";
+            if (appId.Length <= 6) return "******";
+            return appId.Substring(0, 3) + "..." + appId.Substring(appId.Length - 3);
+        }
+
+        public void OnConnected()
+        {
+            Log("OnConnected()");
+        }
+
+        public void OnConnectedToMaster()
+        {
+            string cloudRegion = client.CloudRegion;
+            string serverAddr = client?.LoadBalancingPeer?.ServerAddress;
+            Log($"OnConnectedToMaster() CloudRegion={cloudRegion} ServerAddress={serverAddr} AppVersion={client.AppVersion}");
+            bool lobbySent = client.OpJoinLobby(lobby.IsDefault ? null : lobby);
+            Log($"OpJoinLobby() sent={lobbySent}");
+        }
+
+        public void OnDisconnected(DisconnectCause cause)
+        {
+            LogWarn($"OnDisconnected() cause={cause}");
+        }
+
+        public void OnRegionListReceived(RegionHandler regionHandler)
+        {
+            Log($"OnRegionListReceived() enabledRegions={regionHandler?.EnabledRegions?.Count ?? 0}");
+        }
+
+        public void OnCustomAuthenticationResponse(Dictionary<string, object> data)
+        {
+            Log("OnCustomAuthenticationResponse()");
+        }
+
+        public void OnCustomAuthenticationFailed(string debugMessage)
+        {
+            LogError($"OnCustomAuthenticationFailed(): {debugMessage}");
+        }
+
+        public void OnJoinedLobby()
+        {
+            Log($"OnJoinedLobby() InLobby={client.InLobby} LobbyName={(client.CurrentLobby?.Name ?? "<null>")} LobbyType={(client.CurrentLobby?.Type.ToString() ?? "<null>")}");
+            if (!joinRoom)
+            {
+                Log("joinRoom=false, staying in lobby only.");
+                return;
+            }
+            var enter = new EnterRoomParams
+            {
+                RoomName = roomName,
+                RoomOptions = new RoomOptions
+                {
+                    MaxPlayers = roomMaxPlayers,
+                    IsOpen = true,
+                    IsVisible = true
+                }
+            };
+            Log($"OpJoinOrCreateRoom() -> RoomName={roomName} MaxPlayers={roomMaxPlayers}");
+            bool sent = client.OpJoinOrCreateRoom(enter);
+            Log($"OpJoinOrCreateRoom() sent={sent}");
+        }
+
+        public void OnLeftLobby()
+        {
+            Log("OnLeftLobby()");
+        }
+
+        public void OnRoomListUpdate(List<RoomInfo> roomList)
+        {
+            Log($"OnRoomListUpdate() count={roomList?.Count ?? 0}");
+        }
+
+        public void OnLobbyStatisticsUpdate(List<TypedLobbyInfo> lobbyStatistics)
+        {
+            Log($"OnLobbyStatisticsUpdate() count={lobbyStatistics?.Count ?? 0}");
+        }
+
+        public void OnCreatedRoom()
+        {
+            Log($"OnCreatedRoom() Room={client.CurrentRoom?.Name}");
+        }
+
+        public void OnCreateRoomFailed(short returnCode, string message)
+        {
+            LogError($"OnCreateRoomFailed() code={returnCode} msg={message}");
+        }
+
+        public void OnJoinedRoom()
+        {
+            var lp = client.LocalPlayer;
+            Log($"OnJoinedRoom() Room={client.CurrentRoom?.Name} LocalActor={lp?.ActorNumber} LocalUserId={lp?.UserId} PlayerCount={client.CurrentRoom?.PlayerCount}");
+            if (client.CurrentRoom?.Players != null)
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine("Room Players dump:");
+                foreach (var kv in client.CurrentRoom.Players)
+                {
+                    var p = kv.Value;
+                    sb.AppendLine($"  Actor={p.ActorNumber} Nick={p.NickName} UserId={p.UserId} IsLocal={p.IsLocal}");
+                }
+                Log(sb.ToString());
+            }
+            else
+            {
+                LogWarn("CurrentRoom.Players is null?");
+            }
+        }
+
+        public void OnJoinRoomFailed(short returnCode, string message)
+        {
+            LogError($"OnJoinRoomFailed() code={returnCode} msg={message}");
+        }
+
+        public void OnJoinRandomFailed(short returnCode, string message)
+        {
+            LogWarn($"OnJoinRandomFailed() code={returnCode} msg={message}");
+        }
+
+        public void OnLeftRoom()
+        {
+            Log("OnLeftRoom()");
+        }
+
+        public void OnPlayerEnteredRoom(Player newPlayer)
+        {
+            Log($"OnPlayerEnteredRoom() Actor={newPlayer.ActorNumber} Nick={newPlayer.NickName} UserId={newPlayer.UserId}");
+        }
+
+        public void OnPlayerLeftRoom(Player otherPlayer)
+        {
+            Log($"OnPlayerLeftRoom() Actor={otherPlayer.ActorNumber} Nick={otherPlayer.NickName} UserId={otherPlayer.UserId}");
+        }
+
+        public void OnRoomPropertiesUpdate(ExitGames.Client.Photon.Hashtable propertiesThatChanged)
+        {
+            Log($"OnRoomPropertiesUpdate() keys={propertiesThatChanged?.Count ?? 0}");
+        }
+
+        public void OnPlayerPropertiesUpdate(Player targetPlayer, ExitGames.Client.Photon.Hashtable changedProps)
+        {
+            Log($"OnPlayerPropertiesUpdate() Actor={targetPlayer.ActorNumber} changedKeys={changedProps?.Count ?? 0}");
+        }
+
+        public void OnMasterClientSwitched(Player newMasterClient)
+        {
+            Log($"OnMasterClientSwitched() newMaster Actor={newMasterClient.ActorNumber} Nick={newMasterClient.NickName}");
+        }
+
+        public void OnFriendListUpdate(List<FriendInfo> friendList)
+        {
+            Log($"OnFriendListUpdate() count={friendList?.Count ?? 0}");
+        }
+    }
+}
