@@ -994,8 +994,9 @@ function moveLocalPlayer() {
     localPosition.x += dx * speed;
     localPosition.z += dz * speed;
     localRotation = Math.atan2(dx, dz);
-    syncLocalPosition();
   }
+  // Heartbeat keeps stationary players visible to people who join later.
+  syncLocalPosition();
 }
 
 setInterval(moveLocalPlayer, 30);
