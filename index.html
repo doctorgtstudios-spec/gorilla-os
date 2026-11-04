@@ -195,8 +195,12 @@ label {
   touch-action:pan-y;
 }
 #worldView canvas {display:block;width:100%;height:100%}
-.worldControls button {min-width:74px;min-height:48px;touch-action:none}
-.worldControls button.pressed {background:#527c40;transform:scale(.96)}
+.worldHud{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:10px}
+.worldPad{display:grid;gap:5px;justify-items:center}
+.worldPad>div{display:flex;gap:5px}
+.worldPad button,.jumpButton{width:62px;height:56px;min-width:62px;min-height:56px;border-radius:14px;background:#304b2d;border:2px solid #66845a;font-size:20px;touch-action:none;user-select:none}
+.jumpButton{width:100px;height:76px;background:#79552e;border-color:#b68a53;font-size:15px}
+.worldPad button.pressed,.jumpButton.pressed{background:#527c40;transform:scale(.96)}
 
 </style>
 </head>
@@ -227,13 +231,11 @@ label {
 <section class="box full">
 <h3>GORILLA WORLD <span id="worldStatus" class="pill">LOADING</span></h3>
 <div id="worldView"></div>
-<div class="controls worldControls">
-<button data-move="forward">FORWARD</button>
-<button data-move="left">LEFT</button>
-<button data-move="back">BACK</button>
-<button data-move="right">RIGHT</button>
+<div class="worldHud">
+<div class="worldPad"><button data-move="forward">▲</button><div><button data-move="left">◀</button><button data-move="back">▼</button><button data-move="right">▶</button></div></div>
+<button id="jumpButton" class="jumpButton">JUMP</button>
 </div>
-<div class="note">Hold movement buttons to move. Players in the same Gorilla OS room appear here.</div>
+<div class="note">Hold a direction to move. Press JUMP or Space. Players in the same room appear here.</div>
 </section>
 
 <section class="box full">
@@ -862,6 +864,29 @@ async function initGorillaWorld() {
     const grid = new THREE.GridHelper(100, 50, 0x527b50, 0x3e6140);
     grid.position.y = 0.005;
     scene.add(grid);
+    const trunkMat = new THREE.MeshStandardMaterial({color:0x60432b,roughness:1});
+    const leafMats = [0x245b32,0x347a3d,0x4b9146].map(color=>new THREE.MeshStandardMaterial({color,roughness:1}));
+    const rockMat = new THREE.MeshStandardMaterial({color:0x687264,roughness:1});
+    const addTree = (x,z,s=1,v=0) => {
+      const g = new THREE.Group();
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.22*s,.34*s,3.1*s,7),trunkMat);
+      trunk.position.y=1.55*s; g.add(trunk);
+      for(let i=0;i<3;i++){
+        const crown=new THREE.Mesh(new THREE.IcosahedronGeometry((1.25-i*.12)*s,1),leafMats[(v+i)%3]);
+        crown.position.set((i-1)*.28*s,(3+i*.62)*s,(i%2)*.18*s); g.add(crown);
+      }
+      g.position.set(x,0,z); g.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}}); scene.add(g);
+    };
+    [[-9,-7,1.2,0],[-7,3,1.05,1],[-11,8,1.3,2],[-4,-12,1.1,1],[2,-13,1.25,0],[9,-10,1.2,2],[12,-3,1.35,1],[10,7,1.15,0],[5,12,1.25,2],[-3,11,1.1,1],[-13,-1,1.1,2],[14,11,1.25,0]].forEach(v=>addTree(v[0],v[1],v[2],v[3]));
+    [[-6,.45,5],[7,.55,3],[-10,.4,-9],[11,.5,-8],[4,.35,-5]].forEach((p,i)=>{
+      const rock=new THREE.Mesh(new THREE.DodecahedronGeometry(.75+(i%2)*.25),rockMat);
+      rock.position.set(p[0],p[1],p[2]); rock.scale.set(1.2,.8,1); rock.castShadow=true; scene.add(rock);
+    });
+    [[-3,-4,.55],[3,-5,.8],[-2,4,.65],[5,1,.7]].forEach(p=>{
+      const stump=new THREE.Mesh(new THREE.CylinderGeometry(.75,.82,p[2],10),trunkMat);
+      stump.position.set(p[0],p[2]/2,p[1]); stump.castShadow=true; scene.add(stump);
+    });
+
 
     const makeAvatar = (color) => {
       const group = new THREE.Group();
@@ -914,7 +939,7 @@ async function initGorillaWorld() {
         avatar.group.rotation.y += Math.atan2(Math.sin(delta), Math.cos(delta)) * 0.22;
       }
       if (localAvatar) {
-        localAvatar.position.set(localPosition.x, 0, localPosition.z);
+        localAvatar.position.set(localPosition.x, performance.now()<jumpUntil?1.25:0, localPosition.z);
         localAvatar.rotation.y = localRotation;
       }
       const focus = localAvatar ? localAvatar.position : new THREE.Vector3();
@@ -1044,6 +1069,13 @@ addEventListener('keyup', event => {
   if (key) movementKeys.delete(key);
 });
 addEventListener('blur', () => movementKeys.clear());
+
+let jumpUntil = 0;
+function triggerJump(){ if(localAvatar) jumpUntil=performance.now()+420; }
+$('#jumpButton').addEventListener('pointerdown',e=>{e.preventDefault();$('#jumpButton').classList.add('pressed');triggerJump();});
+['pointerup','pointercancel','lostpointercapture'].forEach(n=>$('#jumpButton').addEventListener(n,()=>$('#jumpButton').classList.remove('pressed')));
+addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();triggerJump();}});
+
 
 
 /* PHOTON EVENTS */
