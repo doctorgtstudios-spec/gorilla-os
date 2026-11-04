@@ -356,6 +356,10 @@ let playFabId = null;
 let sessionTicket = null;
 let connecting = false;
 let photonWasmPreloadPromise = null;
+let photonClientFactory = null;
+let photonConnectOptions = null;
+let photonRegions = [];
+let activePhotonRegion = '';
 
 const VOICE_SIGNAL = 42;
 let voiceActive = false;
@@ -1040,7 +1044,7 @@ newClient = await createRealtimeClient({
   appId: app,
   appVersion: appVersion,
   protocol: 'wss',
-  regionSelection: selectedRegion ? 'select' : 'default'
+  regionSelection: 'select'
 });
 
 client = newClient;
@@ -1049,15 +1053,10 @@ client = newClient;
     /* PLAYFAB CUSTOM AUTH */
 
     const connectOptions = {
-
       username: name,
-
       auth: {
-
         userId: playFabId,
-
         type: 'custom',
-
         parameters:
           'username=' +
           encodeURIComponent(playFabId) +
@@ -1066,43 +1065,35 @@ client = newClient;
       }
     };
 
+    photonClientFactory = createRealtimeClient;
+    photonConnectOptions = connectOptions;
+
     log('Connecting to Photon...');
 
     /* REGION SELECTION */
 
-    if (selectedRegion) {
+    const regionsPromise = newClient.availableRegions();
+    const connectedPromise = newClient.connect(connectOptions);
+    photonRegions = await regionsPromise;
 
-      const regionsPromise =
-        newClient.availableRegions();
+    const chosen = selectedRegion
+      ? photonRegions.find(region =>
+          region.code.toLowerCase() === selectedRegion.toLowerCase()
+        )
+      : photonRegions[0];
 
-      const connectedPromise =
-        newClient.connect(connectOptions);
-
-      const regions = await regionsPromise;
-
-      const chosen = regions.find(
-        region =>
-          region.code.toLowerCase() ===
-          selectedRegion.toLowerCase()
+    if (!chosen) {
+      throw new Error(
+        selectedRegion
+          ? 'Region "' + selectedRegion + '" is not available for this Photon App ID.'
+          : 'Photon did not return any available regions.'
       );
-
-      if (!chosen) {
-        throw new Error(
-          'Region "' + selectedRegion +
-          '" is not available for this Photon App ID.'
-        );
-      }
-
-      log('Selecting region: ' + chosen.code);
-
-      await newClient.selectRegion(chosen.code);
-
-      await connectedPromise;
-
-    } else {
-
-      await newClient.connect(connectOptions);
     }
+
+    log('Selecting region: ' + chosen.code);
+    await newClient.selectRegion(chosen.code);
+    await connectedPromise;
+    activePhotonRegion = chosen.code;
 
     setStatus(true);
 
@@ -1196,16 +1187,105 @@ async function joinRoom(code) {
       await client.leaveRoom();
     }
 
-    log('Joining or creating room ' + code + '...');
+    const maxPlayers = Number($('#max').value);
+    const originalRegion = activePhotonRegion || photonRegions[0]?.code || '';
+    let room = null;
 
-    const room = await client.joinOrCreateRoom(
-      code,
-      {
-        maxPlayers: Number($('#max').value)
+    log('Checking room ' + code + ' in ' + (originalRegion || 'the selected region') + '...');
+
+    try {
+      room = await client.joinRoom(code);
+    } catch (firstError) {
+      if (firstError.code !== 'roomNotFound') {
+        throw firstError;
       }
-    );
 
-    log('Room ready: ' + room.name);
+      log('Room not found in ' + originalRegion + '. Checking other Photon regions...');
+
+      const regionsToTry = photonRegions
+        .map(region => region.code)
+        .filter(region => region && region !== originalRegion);
+
+      try {
+        await client.disconnect();
+      } catch {}
+      try {
+        client.dispose();
+      } catch {}
+      client = null;
+
+      for (const regionCode of regionsToTry) {
+        let candidate = null;
+        try {
+          log('Checking region ' + regionCode + '...');
+          candidate = await photonClientFactory({
+            appId: $('#app').value.trim(),
+            appVersion: $('#ver').value.trim() || 'live',
+            protocol: 'wss',
+            regionSelection: 'select'
+          });
+          client = candidate;
+          attachPhotonEvents(candidate);
+
+          const availablePromise = candidate.availableRegions();
+          const connectedPromise = candidate.connect(photonConnectOptions);
+          const available = await availablePromise;
+          const region = available.find(item =>
+            item.code.toLowerCase() === regionCode.toLowerCase()
+          );
+          if (!region) throw new Error('Region unavailable: ' + regionCode);
+
+          await candidate.selectRegion(region.code);
+          await connectedPromise;
+          activePhotonRegion = region.code;
+          setStatus(true);
+
+          room = await candidate.joinRoom(code);
+          log('Found room in Photon region ' + region.code + '.');
+          break;
+
+        } catch (regionError) {
+          log('No matching room in ' + regionCode + ': ' + (regionError.code || regionError.message));
+          if (candidate) {
+            try { await candidate.disconnect(); } catch {}
+            try { candidate.dispose(); } catch {}
+          }
+          if (client === candidate) client = null;
+          room = null;
+        }
+      }
+
+      if (!room) {
+        const fallbackRegion = originalRegion || photonRegions[0]?.code;
+        if (!fallbackRegion) throw new Error('Could not determine a Photon region to create the room.');
+        log('Room was not found in any region. Reconnecting to ' + fallbackRegion + ' to create a new room.');
+
+        const candidate = await photonClientFactory({
+          appId: $('#app').value.trim(),
+          appVersion: $('#ver').value.trim() || 'live',
+          protocol: 'wss',
+          regionSelection: 'select'
+        });
+        client = candidate;
+        attachPhotonEvents(candidate);
+
+        const availablePromise = candidate.availableRegions();
+        const connectedPromise = candidate.connect(photonConnectOptions);
+        const available = await availablePromise;
+        const region = available.find(item =>
+          item.code.toLowerCase() === fallbackRegion.toLowerCase()
+        );
+        if (!region) throw new Error('Region unavailable: ' + fallbackRegion);
+        await candidate.selectRegion(region.code);
+        await connectedPromise;
+        activePhotonRegion = region.code;
+        setStatus(true);
+
+        room = await candidate.createRoom(code, { maxPlayers });
+      }
+    }
+
+    log('Room ready: ' + room.name + ' (' + activePhotonRegion + ')');
 
     room.setProperties({
       gameMode: gameMode
