@@ -1749,10 +1749,24 @@ $('#newCustomId').addEventListener('click', () => {
 
 /* INITIALIZE */
 
+/*
+ * Realtime Core requires a regular service() pump to process network traffic.
+ * It must run while connecting and while in a room, not only when rendering.
+ */
+setInterval(() => {
+  if (client) {
+    try {
+      client.service();
+    } catch (error) {
+      log('Photon service error: ' + (error?.message || error));
+    }
+  }
+}, 10);
+
 /* Keep the leaderboard synced with the live Photon room roster. */
 setInterval(() => {
   if (client?.room) renderPlayers();
-}, 1000);
+}, 500);
 
 render();
 renderPlayers();
