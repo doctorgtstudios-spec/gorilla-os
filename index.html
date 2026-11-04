@@ -234,6 +234,7 @@ label {
 <div>
 <label>Custom ID</label>
 <input id="cid">
+<button type="button" id="newCustomId">NEW CUSTOM ID</button>
 </div>
 
 <div>
@@ -1666,6 +1667,16 @@ if (!localStorage.gorillaCustomId) {
 }
 
 $('#cid').value = localStorage.gorillaCustomId;
+
+$('#newCustomId').addEventListener('click', () => {
+  const newId = 'GC-' + (crypto.randomUUID?.() || (
+    Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)
+  ));
+  $('#cid').value = newId;
+  localStorage.gorillaCustomId = newId;
+  $('#configStatus').textContent = 'New Custom ID generated.';
+  log('New Custom ID generated.');
+});
 
 /* INITIALIZE */
 
