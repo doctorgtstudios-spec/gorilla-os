@@ -1,0 +1,1349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gorilla OS</title>
+
+<style>
+:root {
+  --bg:#0e120d;
+  --panel:#192017;
+  --green:#8dff9a;
+  --muted:#829982;
+  --key:#27331f;
+}
+
+* {box-sizing:border-box}
+
+body {
+  margin:0;
+  padding:14px;
+  background:var(--bg);
+  color:#d6e6d8;
+  font:14px system-ui,sans-serif;
+}
+
+.wrap {
+  max-width:1000px;
+  margin:auto;
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:12px;
+}
+
+@media(max-width:750px) {
+  .wrap {grid-template-columns:1fr}
+}
+
+.box {
+  background:var(--panel);
+  border-radius:8px;
+  padding:14px;
+}
+
+.full {grid-column:1/-1}
+
+h3 {
+  margin:0 0 12px;
+  color:var(--muted);
+  font-size:13px;
+  letter-spacing:2px;
+}
+
+.screen {
+  display:grid;
+  grid-template-columns:90px 1fr;
+  gap:10px;
+  background:#030603;
+  border:2px solid #354832;
+  border-radius:5px;
+  padding:12px;
+  min-height:300px;
+  color:var(--green);
+  font:13px/1.6 monospace;
+}
+
+pre {
+  margin:0;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  font:inherit;
+}
+
+.fn {color:var(--muted)}
+
+button {
+  background:var(--key);
+  color:white;
+  border:0;
+  border-radius:4px;
+  min-width:36px;
+  min-height:36px;
+  padding:0 10px;
+  font:bold 12px monospace;
+  cursor:pointer;
+}
+
+button:hover {background:#405638}
+button:disabled {opacity:.5}
+button.active {background:#527c40}
+button.danger {background:#713737}
+
+.controls,.keyboard {
+  display:flex;
+  justify-content:center;
+  flex-wrap:wrap;
+  gap:5px;
+  margin:6px 0;
+}
+
+input,select {
+  width:100%;
+  background:#090e08;
+  color:white;
+  border:1px solid #394a34;
+  border-radius:4px;
+  padding:9px;
+  font:13px monospace;
+}
+
+label {
+  display:block;
+  margin:9px 0 4px;
+  color:var(--muted);
+  font-size:12px;
+}
+
+.row {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+}
+
+.note {
+  color:var(--muted);
+  font-size:12px;
+  margin-top:8px;
+  line-height:1.5;
+}
+
+.pill {
+  float:right;
+  background:#482b2b;
+  color:#ffaaaa;
+  border-radius:20px;
+  padding:3px 9px;
+  font:11px monospace;
+}
+
+.pill.ok {
+  background:#204329;
+  color:#a5ffad;
+}
+
+#log {
+  background:#030603;
+  height:140px;
+  overflow:auto;
+  padding:9px;
+  border-radius:4px;
+  margin-top:10px;
+  color:#a9d4ae;
+  font:12px/1.5 monospace;
+  white-space:pre-wrap;
+}
+
+#leaderboard {
+  display:grid;
+  gap:7px;
+}
+
+.player {
+  display:grid;
+  grid-template-columns:18px 1fr auto auto;
+  gap:8px;
+  align-items:center;
+  padding:8px;
+  background:#090e08;
+  border:1px solid #394a34;
+  border-radius:4px;
+  font:12px monospace;
+}
+
+.swatch {
+  width:17px;
+  height:17px;
+  border-radius:3px;
+  display:inline-block;
+}
+
+.player button {
+  min-width:55px;
+  min-height:30px;
+  font-size:10px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="wrap">
+
+<section class="box">
+<h3>GORILLA OS <span id="pill" class="pill">OFFLINE</span></h3>
+
+<div class="screen">
+<pre class="fn" id="fn"></pre>
+<pre id="tx"></pre>
+</div>
+
+<div class="note" id="info"></div>
+<div class="note">Game mode: <span id="modes"></span></div>
+</section>
+
+<section class="box">
+<h3>KEYBOARD</h3>
+<div id="kb"></div>
+<div class="controls" id="ctl"></div>
+<div class="note">Arrow keys navigate. F1-F3 select options.</div>
+</section>
+
+<section class="box full">
+<h3>ROOM PLAYERS <span id="count" class="pill">0</span></h3>
+<div id="leaderboard">
+  <div class="note">Not in a room.</div>
+</div>
+<div class="note">
+Mute controls are local UI controls. Voice transmission is not included.
+</div>
+</section>
+
+<section class="box full">
+<h3>CONNECTION</h3>
+
+<div class="row">
+
+<div>
+<label>PlayFab Title ID</label>
+<input id="title" placeholder="Title ID">
+</div>
+
+<div>
+<label>Custom ID</label>
+<input id="cid">
+</div>
+
+<div>
+<label>Photon App ID</label>
+<input id="app" placeholder="Photon App ID">
+</div>
+
+<div>
+<label>App Version</label>
+<input id="ver" value="live">
+</div>
+
+<div>
+<label>Photon Region</label>
+<select id="region">
+<option value="">Automatic</option>
+<option value="eu">Europe</option>
+<option value="us">US East</option>
+<option value="usw">US West</option>
+<option value="asia">Asia</option>
+<option value="jp">Japan</option>
+<option value="au">Australia</option>
+</select>
+</div>
+
+</div>
+
+<div class="controls">
+<button id="connect">CONNECT</button>
+<button id="disconnect" class="danger">DISCONNECT</button>
+</div>
+
+<div class="note">
+Uses PlayFab authentication and Photon Realtime Core.
+Run on HTTPS or localhost.
+</div>
+
+<div id="log"></div>
+</section>
+
+<section class="box full">
+<h3>ROOM SETTINGS</h3>
+
+<div class="row">
+
+<div>
+<label>Room Code</label>
+<input id="room" maxlength="32" placeholder="Enter room code">
+</div>
+
+<div>
+<label>Maximum Players</label>
+<select id="max">
+<option>2</option>
+<option>4</option>
+<option>6</option>
+<option selected>10</option>
+<option>12</option>
+</select>
+</div>
+
+</div>
+
+<div class="controls">
+<button id="join">JOIN / CREATE</button>
+<button id="leave">LEAVE ROOM</button>
+</div>
+</section>
+
+</div>
+
+<script type="module">
+'use strict';
+
+/* PHOTON REALTIME CORE */
+
+import {
+  createRealtimeClient
+} from 'https://esm.sh/@photonengine/realtime-core@6.0.1';
+
+/* HELPERS */
+
+const $ = selector => document.querySelector(selector);
+
+const log = message => {
+  const element = $('#log');
+  element.textContent += message + '\n';
+  element.scrollTop = element.scrollHeight;
+};
+
+function setStatus(connected) {
+  $('#pill').textContent = connected ? 'CONNECTED' : 'OFFLINE';
+  $('#pill').className = 'pill' + (connected ? ' ok' : '');
+}
+
+/* CONNECTION VARIABLES */
+
+let client = null;
+let playFabId = null;
+let sessionTicket = null;
+let connecting = false;
+
+/* PLAYFAB REQUEST */
+
+async function pfRequest(title, endpoint, body, ticket) {
+
+  const response = await fetch(
+    `https://${encodeURIComponent(title)}.playfabapi.com/${endpoint}`,
+    {
+      method: 'POST',
+
+      headers: {
+        'Content-Type': 'application/json',
+
+        ...(ticket
+          ? {'X-Authorization': ticket}
+          : {})
+      },
+
+      body: JSON.stringify(body)
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || data.code !== 200) {
+    throw new Error(
+      data.errorMessage ||
+      data.error ||
+      'PlayFab request failed.'
+    );
+  }
+
+  return data.data;
+}
+
+/* GAME SETTINGS */
+
+const pages = [
+  'ROOM',
+  'NAME',
+  'COLOR',
+  'TURN',
+  'MIC',
+  'QUEUE',
+  'GROUP',
+  'VOICE',
+  'VISUALS',
+  'CREDITS'
+];
+
+const labels = {
+  ROOM:'ROOM',
+  NAME:'NAME',
+  COLOR:'COLOR',
+  TURN:'TURN',
+  MIC:'MIC',
+  QUEUE:'QUEUE',
+  GROUP:'GROUP',
+  VOICE:'VOICE',
+  VISUALS:'VSUAL',
+  CREDITS:'CRDTS'
+};
+
+let page = 'STARTUP';
+
+let name = localStorage.gorillaName || 'gorilla';
+let nameDraft = name;
+
+let rgb = [0,0,0];
+let colorIndex = 0;
+
+let turn = 'SNAP';
+let speed = 4;
+
+let mic = 'ALL CHAT';
+let queue = 'DEFAULT';
+let group = 'FOREST';
+
+let voice = false;
+let particles = false;
+
+let gameMode = 'INFECTION';
+let roomCode = '';
+
+const muted = new Set();
+
+/* ROOM HELPERS */
+
+function isJoined() {
+  return !!client?.room;
+}
+
+function currentRoom() {
+  return client?.room?.name || '';
+}
+
+function players() {
+  return client?.room?.players || [];
+}
+
+function actorName(player) {
+  return player?.name || 'GORILLA';
+}
+
+function actorColor(player) {
+
+  const value =
+    player?.customProperties?.color || '0,0,0';
+
+  const channels = String(value)
+    .split(',')
+    .map(Number);
+
+  return `rgb(${channels
+    .map(x => Math.max(0,Math.min(9,x))*28)
+    .join(',')})`;
+}
+
+/* PLAYER SETTINGS */
+
+function publish() {
+
+  if (!client || !isJoined()) return;
+
+  try {
+
+    client.setPlayerName(name);
+
+    client.setPlayerProperties({
+      color: rgb.join(','),
+      pfid: playFabId || '',
+      gameMode: gameMode
+    });
+
+  } catch(error) {
+    log('Player update: ' + error.message);
+  }
+}
+
+/* PLAYER LIST */
+
+function renderPlayers() {
+
+  const board = $('#leaderboard');
+
+  if (!isJoined()) {
+
+    board.innerHTML =
+      '<div class="note">Not in a room.</div>';
+
+    $('#count').textContent = '0';
+
+    return;
+  }
+
+  const list = players();
+
+  $('#count').textContent = list.length;
+  board.replaceChildren();
+
+  list.forEach(player => {
+
+    const row = document.createElement('div');
+    row.className = 'player';
+
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.background = actorColor(player);
+
+    const playerName = document.createElement('span');
+    playerName.textContent = actorName(player);
+
+    const muteButton = document.createElement('button');
+
+    muteButton.textContent =
+      muted.has(player.number)
+        ? 'UNMUTE'
+        : 'MUTE';
+
+    muteButton.onclick = () => {
+
+      if (muted.has(player.number)) {
+        muted.delete(player.number);
+      } else {
+        muted.add(player.number);
+      }
+
+      renderPlayers();
+    };
+
+    const you = document.createElement('span');
+
+    you.textContent =
+      player.number === client.localPlayer?.number
+        ? 'YOU'
+        : '';
+
+    row.append(
+      swatch,
+      playerName,
+      muteButton,
+      you
+    );
+
+    board.append(row);
+  });
+}
+
+/* PHOTON EVENTS */
+
+function attachPhotonEvents(c) {
+
+  c.on('roomJoined', () => {
+
+    log('Joined room: ' + currentRoom());
+
+    publish();
+    renderPlayers();
+    render();
+  });
+
+  c.on('roomLeft', () => {
+
+    log('Left room.');
+
+    muted.clear();
+    renderPlayers();
+    render();
+  });
+
+  c.on('playerJoined', ({player}) => {
+
+    log((player.name || 'A player') + ' joined.');
+
+    renderPlayers();
+  });
+
+  c.on('playerLeft', ({playerNumber}) => {
+
+    log('Player ' + playerNumber + ' left.');
+
+    muted.delete(playerNumber);
+    renderPlayers();
+  });
+
+  c.on('playerPropertiesChanged', () => {
+    renderPlayers();
+  });
+
+  c.on('disconnected', ({cause}) => {
+
+    log('Photon disconnected: ' + cause);
+
+    if (client === c) {
+      client = null;
+      setStatus(false);
+      renderPlayers();
+      render();
+    }
+  });
+
+  c.on('error', ({code,message}) => {
+    log('Photon error: ' + code + ' ' + message);
+  });
+}
+
+/* CONNECT */
+
+async function connect() {
+
+  if (connecting || client) return;
+
+  const title = $('#title').value.trim();
+  const app = $('#app').value.trim();
+  const customId = $('#cid').value.trim();
+
+  const appVersion =
+    $('#ver').value.trim() || 'live';
+
+  const selectedRegion =
+    $('#region').value.trim();
+
+  if (!title || !app || !customId) {
+
+    log('Fill in Title ID, Photon App ID and Custom ID.');
+
+    return;
+  }
+
+  connecting = true;
+  $('#connect').disabled = true;
+
+  let newClient = null;
+
+  try {
+
+    /* PLAYFAB LOGIN */
+
+    log('Logging into PlayFab...');
+
+    const login = await pfRequest(
+      title,
+      'Client/LoginWithCustomID',
+      {
+        TitleId: title,
+        CustomId: customId,
+        CreateAccount: true
+      }
+    );
+
+    playFabId = login.PlayFabId;
+    sessionTicket = login.SessionTicket;
+
+    log('PlayFab login successful.');
+
+    /* GET PHOTON TOKEN */
+
+    log('Getting Photon authentication token...');
+
+    const auth = await pfRequest(
+      title,
+      'Client/GetPhotonAuthenticationToken',
+      {
+        PhotonApplicationId: app
+      },
+      sessionTicket
+    );
+
+    const photonToken =
+      auth.PhotonCustomAuthenticationToken;
+
+    if (!photonToken) {
+      throw new Error(
+        'PlayFab did not return a Photon authentication token.'
+      );
+    }
+
+    /* CREATE PHOTON CLIENT */
+
+    log('Loading Photon Realtime Core...');
+
+    newClient = await createRealtimeClient({
+
+      appId: app,
+      appVersion: appVersion,
+      protocol: 'wss',
+
+      regionSelection:
+        selectedRegion ? 'select' : 'default',
+
+      wasm: {
+        url:
+          'https://cdn.jsdelivr.net/npm/@photonengine/realtime-core@6.0.1/realtimecore.wasm'
+      }
+    });
+
+    client = newClient;
+
+    attachPhotonEvents(newClient);
+
+    /* PLAYFAB CUSTOM AUTH */
+
+    const connectOptions = {
+
+      username: name,
+
+      auth: {
+
+        userId: playFabId,
+
+        type: 'custom',
+
+        parameters:
+          'username=' +
+          encodeURIComponent(playFabId) +
+          '&token=' +
+          encodeURIComponent(photonToken)
+      }
+    };
+
+    log('Connecting to Photon...');
+
+    /* REGION SELECTION */
+
+    if (selectedRegion) {
+
+      const regionsPromise =
+        newClient.availableRegions();
+
+      const connectedPromise =
+        newClient.connect(connectOptions);
+
+      const regions = await regionsPromise;
+
+      const chosen = regions.find(
+        region =>
+          region.code.toLowerCase() ===
+          selectedRegion.toLowerCase()
+      );
+
+      if (!chosen) {
+        throw new Error(
+          'Region "' + selectedRegion +
+          '" is not available for this Photon App ID.'
+        );
+      }
+
+      log('Selecting region: ' + chosen.code);
+
+      await newClient.selectRegion(chosen.code);
+
+      await connectedPromise;
+
+    } else {
+
+      await newClient.connect(connectOptions);
+    }
+
+    setStatus(true);
+
+    log('Photon connected successfully.');
+
+    render();
+
+  } catch(error) {
+
+    log('Connection failed: ' + error.message);
+
+    if (newClient) {
+
+      try {
+        await newClient.disconnect();
+      } catch {}
+
+      try {
+        newClient.dispose();
+      } catch {}
+    }
+
+    if (client === newClient) {
+      client = null;
+    }
+
+    sessionTicket = null;
+
+    setStatus(false);
+    renderPlayers();
+    render();
+
+  } finally {
+
+    connecting = false;
+    $('#connect').disabled = false;
+  }
+}
+
+/* DISCONNECT */
+
+async function disconnect() {
+
+  const oldClient = client;
+
+  client = null;
+  sessionTicket = null;
+  playFabId = null;
+
+  muted.clear();
+
+  if (oldClient) {
+
+    try {
+      await oldClient.disconnect();
+    } catch(error) {
+      log('Disconnect: ' + error.message);
+    }
+
+    try {
+      oldClient.dispose();
+    } catch {}
+  }
+
+  setStatus(false);
+
+  renderPlayers();
+  render();
+
+  log('Disconnected.');
+}
+
+/* JOIN ROOM */
+
+async function joinRoom(code) {
+
+  if (!client || !client.isConnected) {
+    log('Connect first.');
+    return;
+  }
+
+  if (!code) {
+    log('Enter a room code.');
+    return;
+  }
+
+  try {
+
+    if (isJoined()) {
+      await client.leaveRoom();
+    }
+
+    log('Joining or creating room ' + code + '...');
+
+    const room = await client.joinOrCreateRoom(
+      code,
+      {
+        maxPlayers: Number($('#max').value)
+      }
+    );
+
+    log('Room ready: ' + room.name);
+
+    room.setProperties({
+      gameMode: gameMode
+    });
+
+    publish();
+    renderPlayers();
+    render();
+
+  } catch(error) {
+
+    log(
+      'Room error: ' +
+      (error.code || '') +
+      ' ' +
+      error.message
+    );
+  }
+}
+
+/* LEAVE ROOM */
+
+async function leaveRoom() {
+
+  if (!client || !isJoined()) {
+    log('You are not in a room.');
+    return;
+  }
+
+  try {
+
+    await client.leaveRoom();
+
+    muted.clear();
+
+  } catch(error) {
+
+    log('Leave room error: ' + error.message);
+  }
+
+  renderPlayers();
+  render();
+}
+
+/* SETTINGS NAVIGATION */
+
+function move(direction) {
+
+  page = pages[
+    (pages.indexOf(page) + direction + pages.length)
+    % pages.length
+  ];
+
+  render();
+}
+
+function press(key) {
+
+  const upper = String(key).toUpperCase();
+
+  if (page === 'STARTUP') {
+    page = 'ROOM';
+    render();
+    return;
+  }
+
+  if (key === 'up') {
+    move(-1);
+    return;
+  }
+
+  if (key === 'down') {
+    move(1);
+    return;
+  }
+
+  switch(page) {
+
+    case 'ROOM':
+
+      if (key === 'enter') {
+
+        roomCode
+          ? joinRoom(roomCode)
+          : log('Enter a room code.');
+
+      } else if (key === 'delete') {
+
+        roomCode = roomCode.slice(0,-1);
+
+      } else if (
+        /^[A-Z0-9]$/.test(upper) &&
+        roomCode.length < 32
+      ) {
+
+        roomCode += upper;
+      }
+
+      break;
+
+    case 'NAME':
+
+      if (key === 'enter') {
+
+        name =
+          nameDraft.trim().slice(0,12) || 'gorilla';
+
+        nameDraft = name;
+
+        localStorage.gorillaName = name;
+
+        if (client) {
+          try {
+            client.setPlayerName(name);
+          } catch {}
+        }
+
+        publish();
+
+        log('Name saved.');
+
+      } else if (key === 'delete') {
+
+        nameDraft = nameDraft.slice(0,-1);
+
+      } else if (
+        /^[A-Z0-9]$/.test(upper) &&
+        nameDraft.length < 12
+      ) {
+
+        nameDraft += upper;
+      }
+
+      break;
+
+    case 'COLOR':
+
+      if (/^option[123]$/.test(key)) {
+
+        colorIndex = Number(key.slice(-1)) - 1;
+
+      } else if (/^[0-9]$/.test(key)) {
+
+        rgb[colorIndex] = Number(key);
+
+        publish();
+      }
+
+      break;
+
+    case 'TURN':
+
+      if (/^option[123]$/.test(key)) {
+
+        turn = [
+          'SNAP',
+          'SMOOTH',
+          'NONE'
+        ][Number(key.slice(-1))-1];
+
+      } else if (/^[0-9]$/.test(key)) {
+
+        speed = Number(key);
+      }
+
+      break;
+
+    case 'MIC':
+
+      if (/^option[123]$/.test(key)) {
+
+        mic = [
+          'ALL CHAT',
+          'PUSH TO TALK',
+          'PUSH TO MUTE'
+        ][Number(key.slice(-1))-1];
+      }
+
+      break;
+
+    case 'QUEUE':
+
+      if (key === 'option1') queue = 'DEFAULT';
+      if (key === 'option2') queue = 'COMPETITIVE';
+
+      break;
+
+    case 'GROUP':
+
+      if (/^[1-4]$/.test(key)) {
+
+        group = [
+          'FOREST',
+          'CAVE',
+          'CANYON',
+          'CITY'
+        ][Number(key)-1];
+      }
+
+      if (key === 'enter') {
+
+        roomCode =
+          `PUB-${group}-${queue}-${gameMode}`;
+
+        $('#room').value = roomCode;
+
+        joinRoom(roomCode);
+      }
+
+      break;
+
+    case 'VOICE':
+
+      if (key === 'option1') voice = true;
+      if (key === 'option2') voice = false;
+
+      break;
+
+    case 'VISUALS':
+
+      if (key === 'option1') particles = true;
+      if (key === 'option2') particles = false;
+
+      break;
+  }
+
+  render();
+}
+
+/* SCREEN TEXT */
+
+function screenText() {
+
+  switch(page) {
+
+    case 'STARTUP':
+
+      return `GORILLA OS
+
+${client?.isConnected ? 'CONNECTED' : 'OFFLINE'}
+
+PRESS ANY KEY`;
+
+    case 'ROOM':
+
+      return `ROOM CODE:
+
+${roomCode}
+
+CURRENT ROOM:
+${currentRoom() || 'NONE'}
+
+PLAYERS: ${players().length}`;
+
+    case 'NAME':
+
+      return `CURRENT NAME:
+${name}
+
+NEW NAME:
+${nameDraft}
+
+ENTER TO SAVE`;
+
+    case 'COLOR':
+
+      return `RED: ${rgb[0]} ${colorIndex===0?'<':''}
+GREEN: ${rgb[1]} ${colorIndex===1?'<':''}
+BLUE: ${rgb[2]} ${colorIndex===2?'<':''}
+
+OPT 1-3 SELECT CHANNEL
+0-9 SET VALUE`;
+
+    case 'TURN':
+
+      return `1 SNAP
+2 SMOOTH
+3 NONE
+
+TURN: ${turn}
+SPEED: ${speed}`;
+
+    case 'MIC':
+
+      return `1 ALL CHAT
+2 PUSH TO TALK
+3 PUSH TO MUTE
+
+${mic}`;
+
+    case 'QUEUE':
+
+      return `1 DEFAULT
+2 COMPETITIVE
+
+${queue}`;
+
+    case 'GROUP':
+
+      return `1 FOREST
+2 CAVE
+3 CANYON
+4 CITY
+
+MAP: ${group}
+ENTER TO JOIN`;
+
+    case 'VOICE':
+
+      return `1 ENABLE MIC
+2 DISABLE MIC
+
+${voice?'ENABLED':'DISABLED'}
+
+REMOTE VOICE NOT CONFIGURED`;
+
+    case 'VISUALS':
+
+      return `1 ENABLE PARTICLES
+2 DISABLE PARTICLES
+
+${particles?'ON':'OFF'}`;
+
+    case 'CREDITS':
+
+      return `GORILLA OS
+
+BROWSER EDITION
+
+MONKE NEED TO SWING`;
+  }
+}
+
+/* RENDER */
+
+function render() {
+
+  $('#fn').textContent = pages
+    .map(p => labels[p] + (page===p?' <-':''))
+    .join('\n');
+
+  $('#tx').textContent = screenText();
+
+  $('#info').textContent =
+    'ROOM: ' + (currentRoom() || 'NONE');
+
+  document.querySelectorAll('#modes button')
+    .forEach(button => {
+
+      button.classList.toggle(
+        'active',
+        button.textContent === gameMode
+      );
+    });
+}
+
+/* ON-SCREEN KEYBOARD */
+
+function addButton(label,key,parent) {
+
+  const button = document.createElement('button');
+
+  button.textContent = label;
+  button.onclick = () => press(key);
+
+  parent.appendChild(button);
+}
+
+[
+  '1234567890',
+  'QWERTYUIOP',
+  'ASDFGHJKL',
+  'ZXCVBNM'
+].forEach(row => {
+
+  const div = document.createElement('div');
+
+  div.className = 'keyboard';
+
+  [...row].forEach(character => {
+    addButton(character,character,div);
+  });
+
+  $('#kb').append(div);
+});
+
+/* CONTROL BUTTONS */
+
+[
+  ['UP','up'],
+  ['DOWN','down'],
+  ['OPT1','option1'],
+  ['OPT2','option2'],
+  ['OPT3','option3'],
+  ['DEL','delete'],
+  ['ENTER','enter']
+].forEach(([label,key]) => {
+
+  addButton(label,key,$('#ctl'));
+});
+
+/* GAME MODES */
+
+[
+  'CASUAL',
+  'INFECTION',
+  'HUNT'
+].forEach(mode => {
+
+  const button = document.createElement('button');
+
+  button.textContent = mode;
+
+  button.onclick = () => {
+
+    gameMode = mode;
+
+    publish();
+    render();
+  };
+
+  $('#modes').append(button);
+});
+
+/* PHYSICAL KEYBOARD */
+
+addEventListener('keydown',event => {
+
+  if (/INPUT|SELECT|TEXTAREA/.test(event.target.tagName)) {
+    return;
+  }
+
+  const map = {
+    Enter:'enter',
+    Backspace:'delete',
+    ArrowUp:'up',
+    ArrowDown:'down',
+    F1:'option1',
+    F2:'option2',
+    F3:'option3'
+  };
+
+  if (map[event.key]) {
+
+    event.preventDefault();
+    press(map[event.key]);
+
+  } else if (/^[a-z0-9]$/i.test(event.key)) {
+
+    press(event.key);
+  }
+});
+
+/* CONNECTION BUTTONS */
+
+$('#connect').onclick = connect;
+$('#disconnect').onclick = disconnect;
+
+/* ROOM BUTTONS */
+
+$('#join').onclick = () => {
+
+  roomCode =
+    $('#room').value.trim().toUpperCase();
+
+  joinRoom(roomCode);
+};
+
+$('#leave').onclick = leaveRoom;
+
+/* CUSTOM ID */
+
+if (!localStorage.gorillaCustomId) {
+
+  localStorage.gorillaCustomId =
+    'GC-' +
+    (
+      crypto.randomUUID?.() ||
+      Math.random().toString(36).slice(2)
+    );
+}
+
+$('#cid').value = localStorage.gorillaCustomId;
+
+/* INITIALIZE */
+
+render();
+renderPlayers();
+
+log('Gorilla OS ready.');
+
+</script>
+
+</body>
+</html>
