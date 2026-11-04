@@ -1133,6 +1133,32 @@ client = newClient;
   }
 }
 
+async function freshPhotonConnectOptions() {
+  const title = $('#title').value.trim();
+  const app = $('#app').value.trim();
+
+  const auth = await pfRequest(
+    title,
+    'Client/GetPhotonAuthenticationToken',
+    { PhotonApplicationId: app },
+    sessionTicket
+  );
+
+  const token = auth.PhotonCustomAuthenticationToken;
+  if (!token) throw new Error('PlayFab did not return a fresh Photon token.');
+
+  return {
+    username: name,
+    auth: {
+      userId: playFabId,
+      type: 'custom',
+      parameters:
+        'username=' + encodeURIComponent(playFabId) +
+        '&token=' + encodeURIComponent(token)
+    }
+  };
+}
+
 /* DISCONNECT */
 
 async function disconnect() {
@@ -1228,7 +1254,8 @@ async function joinRoom(code) {
           attachPhotonEvents(candidate);
 
           const availablePromise = candidate.availableRegions();
-          const connectedPromise = candidate.connect(photonConnectOptions);
+          const candidateAuth = await freshPhotonConnectOptions();
+          const connectedPromise = candidate.connect(candidateAuth);
           const available = await availablePromise;
           const region = available.find(item =>
             item.code.toLowerCase() === regionCode.toLowerCase()
@@ -1270,7 +1297,8 @@ async function joinRoom(code) {
         attachPhotonEvents(candidate);
 
         const availablePromise = candidate.availableRegions();
-        const connectedPromise = candidate.connect(photonConnectOptions);
+        const candidateAuth = await freshPhotonConnectOptions();
+        const connectedPromise = candidate.connect(candidateAuth);
         const available = await availablePromise;
         const region = available.find(item =>
           item.code.toLowerCase() === fallbackRegion.toLowerCase()
