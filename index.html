@@ -183,7 +183,21 @@ label {
   min-height:30px;
   font-size:10px;
 }
-</style>
+
+#worldView {
+  width:100%;
+  height: min(55vh, 430px);
+  min-height:260px;
+  overflow:hidden;
+  border:2px solid #354832;
+  border-radius:6px;
+  background:#101b13;
+  touch-action:pan-y;
+}
+#worldView canvas {display:block;width:100%;height:100%}
+.worldControls button {min-width:74px;min-height:48px;touch-action:none}
+.worldControls button.pressed {background:#527c40;transform:scale(.96)}
+\n</style>
 </head>
 
 <body>
@@ -787,11 +801,241 @@ function renderPlayers() {
   });
 }
 
-/* PHOTON EVENTS */
+
+/* GORILLA 3D WORLD AND POSITION SYNC */
+const PLAYER_MOVE_EVENT = 43;
+let world3D = null;
+let localPosition = { x: 0, y: 0, z: 0 };
+let localRotation = 0;
+let localAvatar = null;
+const remoteAvatars = new Map();
+const movementKeys = new Set();
+let lastMoveSend = 0;
+
+function worldColor(player) {
+  const values = String(player?.customProperties?.color || '0,8,0').split(',').map(v => Math.max(0, Math.min(9, Number(v) || 0)));
+  return (values[0] * 28 << 16) | (values[1] * 28 << 8) | (values[2] * 28);
+}
+
+async function initGorillaWorld() {
+  const host = $('#worldView');
+  try {
+    const THREE = await import('https://esm.sh/three@0.160.0');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x17251a);
+    scene.fog = new THREE.Fog(0x17251a, 18, 42);
+    const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
+    camera.position.set(0, 7, 11);
+    camera.lookAt(0, 1, 0);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.shadowMap.enabled = true;
+    host.replaceChildren(renderer.domElement);
+
+    scene.add(new THREE.HemisphereLight(0xd9ffe0, 0x35402b, 2));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+    sun.position.set(5, 10, 6);
+    sun.castShadow = true;
+    scene.add(sun);
+
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(100, 100),
+      new THREE.MeshStandardMaterial({ color: 0x34533a, roughness: 1 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.04;
+    floor.receiveShadow = true;
+    scene.add(floor);
+    const grid = new THREE.GridHelper(100, 50, 0x527b50, 0x3e6140);
+    grid.position.y = 0.005;
+    scene.add(grid);
+
+    const makeAvatar = (color) => {
+      const group = new THREE.Group();
+      const fur = new THREE.MeshStandardMaterial({ color, roughness: 0.9 });
+      const dark = new THREE.MeshStandardMaterial({ color: 0x29251f, roughness: 1 });
+      const body = new THREE.Mesh(new THREE.SphereGeometry(0.48, 16, 12), fur);
+      body.scale.set(0.85, 1.05, 0.7);
+      body.position.y = 1.05;
+      group.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.38, 16, 12), fur);
+      head.position.set(0, 1.68, 0.02);
+      group.add(head);
+      for (const side of [-1, 1]) {
+        const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.55, 4, 8), fur);
+        arm.position.set(side * 0.52, 0.86, 0.12);
+        arm.rotation.z = side * -0.48;
+        group.add(arm);
+        const hand = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 8), dark);
+        hand.position.set(side * 0.76, 0.48, 0.22);
+        group.add(hand);
+        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 8), dark);
+        eye.position.set(side * 0.14, 1.73, 0.35);
+        group.add(eye);
+      }
+      group.traverse(obj => { if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; } });
+      scene.add(group);
+      return group;
+    };
+
+    world3D = { THREE, scene, camera, renderer, makeAvatar };
+    localAvatar = makeAvatar(0x70df78);
+    localAvatar.position.set(0, 0, 0);
+
+    const resize = () => {
+      const width = Math.max(1, host.clientWidth);
+      const height = Math.max(1, host.clientHeight);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height, false);
+    };
+    new ResizeObserver(resize).observe(host);
+    resize();
+
+    const animate = () => {
+      requestAnimationFrame(animate);
+      if (!world3D) return;
+      for (const avatar of remoteAvatars.values()) {
+        avatar.group.position.lerp(avatar.target, 0.22);
+        const delta = avatar.targetRotation - avatar.group.rotation.y;
+        avatar.group.rotation.y += Math.atan2(Math.sin(delta), Math.cos(delta)) * 0.22;
+      }
+      if (localAvatar) {
+        localAvatar.position.set(localPosition.x, 0, localPosition.z);
+        localAvatar.rotation.y = localRotation;
+      }
+      const focus = localAvatar ? localAvatar.position : new THREE.Vector3();
+      camera.position.x += (focus.x - camera.position.x) * 0.035;
+      camera.position.z += (focus.z + 11 - camera.position.z) * 0.035;
+      camera.lookAt(focus.x, 1, focus.z);
+      renderer.render(scene, camera);
+    };
+    animate();
+    $('#worldStatus').textContent = 'READY';
+    $('#worldStatus').className = 'pill ok';
+    log('3D gorilla world ready.');
+  } catch (error) {
+    $('#worldStatus').textContent = 'UNAVAILABLE';
+    log('3D world error: ' + error.message);
+  }
+}
+
+function getActorNumber(player) {
+  return player?.number ?? player?.actorNumber ?? player?.id;
+}
+
+function syncLocalPosition() {
+  if (!client?.isConnected || !isJoined()) return;
+  const now = performance.now();
+  if (now - lastMoveSend < 90) return;
+  lastMoveSend = now;
+  try {
+    client.sendEvent(PLAYER_MOVE_EVENT, {
+      x: Math.round(localPosition.x * 100) / 100,
+      z: Math.round(localPosition.z * 100) / 100,
+      rotation: Math.round(localRotation * 100) / 100,
+      color: rgb.join(','),
+      name
+    }, { reliable: false });
+  } catch (error) {
+    log('Movement sync: ' + error.message);
+  }
+}
+
+function handlePlayerMovement({ senderNumber, data }) {
+  if (!data || senderNumber == null || senderNumber === client?.localPlayer?.number) return;
+  if (![data.x, data.z, data.rotation].every(value => Number.isFinite(Number(value)))) return;
+  let avatar = remoteAvatars.get(senderNumber);
+  if (!avatar && world3D) {
+    const player = players().find(item => getActorNumber(item) === senderNumber);
+    const group = world3D.makeAvatar(player ? worldColor(player) : 0x8dff9a);
+    avatar = { group, target: new world3D.THREE.Vector3(), targetRotation: 0 };
+    remoteAvatars.set(senderNumber, avatar);
+  }
+  if (!avatar) return;
+  avatar.target.set(Number(data.x), 0, Number(data.z));
+  avatar.targetRotation = Number(data.rotation);
+  if (data.color && world3D) {
+    const channels = String(data.color).split(',').map(v => Math.max(0, Math.min(9, Number(v) || 0)));
+    const color = new world3D.THREE.Color((channels[0]*28)/255, (channels[1]*28)/255, (channels[2]*28)/255);
+    avatar.group.traverse(obj => {
+      if (obj.isMesh && obj.material?.color && obj.geometry?.type !== 'SphereGeometry') obj.material.color.copy(color);
+    });
+  }
+}
+
+function removeRemoteAvatar(playerNumber) {
+  const avatar = remoteAvatars.get(playerNumber);
+  if (avatar && world3D) {
+    world3D.scene.remove(avatar.group);
+    avatar.group.traverse(obj => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) obj.material.dispose();
+    });
+  }
+  remoteAvatars.delete(playerNumber);
+}
+
+function clearRemoteAvatars() {
+  [...remoteAvatars.keys()].forEach(removeRemoteAvatar);
+}
+
+function moveLocalPlayer() {
+  if (!localAvatar || !isJoined()) return;
+  let dx = 0, dz = 0;
+  if (movementKeys.has('left')) dx -= 1;
+  if (movementKeys.has('right')) dx += 1;
+  if (movementKeys.has('forward')) dz -= 1;
+  if (movementKeys.has('back')) dz += 1;
+  const length = Math.hypot(dx, dz);
+  if (length) {
+    dx /= length; dz /= length;
+    const speed = 0.11;
+    localPosition.x += dx * speed;
+    localPosition.z += dz * speed;
+    localRotation = Math.atan2(dx, dz);
+    syncLocalPosition();
+  }
+}
+
+setInterval(moveLocalPlayer, 30);
+
+document.querySelectorAll('[data-move]').forEach(button => {
+  const key = button.dataset.move;
+  const release = event => {
+    event.preventDefault();
+    movementKeys.delete(key);
+    button.classList.remove('pressed');
+  };
+  button.addEventListener('pointerdown', event => {
+    event.preventDefault();
+    movementKeys.add(key);
+    button.classList.add('pressed');
+    button.setPointerCapture?.(event.pointerId);
+  });
+  button.addEventListener('pointerup', release);
+  button.addEventListener('pointercancel', release);
+  button.addEventListener('lostpointercapture', release);
+});
+
+addEventListener('keydown', event => {
+  if (/INPUT|SELECT|TEXTAREA/.test(event.target.tagName)) return;
+  const map = { ArrowUp:'forward', w:'forward', ArrowDown:'back', s:'back', ArrowLeft:'left', a:'left', ArrowRight:'right', d:'right' };
+  const key = map[event.key] || map[event.key.toLowerCase()];
+  if (key) { movementKeys.add(key); event.preventDefault(); }
+});
+addEventListener('keyup', event => {
+  const map = { ArrowUp:'forward', w:'forward', ArrowDown:'back', s:'back', ArrowLeft:'left', a:'left', ArrowRight:'right', d:'right' };
+  const key = map[event.key] || map[event.key.toLowerCase()];
+  if (key) movementKeys.delete(key);
+});
+addEventListener('blur', () => movementKeys.clear());
+
+\n/* PHOTON EVENTS */
 
 function attachPhotonEvents(c) {
 
-  c.onEvent(VOICE_SIGNAL, handleVoiceSignal);
+  c.onEvent(VOICE_SIGNAL, handleVoiceSignal);\n  c.onEvent(PLAYER_MOVE_EVENT, handlePlayerMovement);
 
   c.on('roomJoined', () => {
 
@@ -1701,7 +1945,7 @@ $('#newCustomId').addEventListener('click', () => {
   log('New Custom ID generated.');
 });
 
-/* INITIALIZE */
+/* INITIALIZE */\ninitGorillaWorld();
 
 /* Keep the leaderboard synced with the live Photon room roster. */
 setInterval(() => {
