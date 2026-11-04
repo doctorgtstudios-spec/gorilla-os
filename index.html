@@ -1750,20 +1750,10 @@ $('#newCustomId').addEventListener('click', () => {
 /* INITIALIZE */
 
 /*
- * Realtime Core requires a regular service() pump to process network traffic.
- * It must run while connecting and while in a room, not only when rendering.
+ * Realtime Core starts its own service pump by default (16 ms).
+ * Do not call client.service() again here: a second pump can race the
+ * SDK's built-in timer. Only refresh the UI from the live room snapshot.
  */
-setInterval(() => {
-  if (client) {
-    try {
-      client.service();
-    } catch (error) {
-      log('Photon service error: ' + (error?.message || error));
-    }
-  }
-}, 10);
-
-/* Keep the leaderboard synced with the live Photon room roster. */
 setInterval(() => {
   if (client?.room) renderPlayers();
 }, 500);
