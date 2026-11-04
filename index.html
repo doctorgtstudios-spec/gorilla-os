@@ -678,55 +678,33 @@ function players() {
     const room = client?.room;
     if (!room) return [];
 
+    // Realtime Core v6 exposes room.players as an array of player snapshots,
+    // including the local player. This mirrors Photon PUN's PlayerList usage.
     const roster = room.players;
     let list = [];
 
-    // Photon Realtime Core v6 documents room.players as a player snapshot array.
-    // Keep fallbacks for Map/object forms returned by alternate SDK builds.
-    if (roster instanceof Map) {
+    if (Array.isArray(roster)) {
+      list = roster.slice();
+    } else if (roster instanceof Map) {
       list = Array.from(roster.values());
-    } else if (Array.isArray(roster)) {
-      list = roster.map(item =>
-        Array.isArray(item) && item.length === 2 ? item[1] : item
-      ).filter(Boolean);
     } else if (roster && typeof roster[Symbol.iterator] === 'function') {
-      list = Array.from(roster, item =>
-        Array.isArray(item) && item.length === 2 ? item[1] : item
-      ).filter(Boolean);
+      list = Array.from(roster);
     } else if (roster && typeof roster === 'object') {
-      if (typeof roster.values === 'function') {
-        try { list = Array.from(roster.values()).filter(Boolean); } catch {}
-      }
-      if (!list.length) list = Object.values(roster).filter(Boolean);
+      list = typeof roster.values === 'function'
+        ? Array.from(roster.values())
+        : Object.values(roster);
     }
 
-    // The room's server-reported count is authoritative. If the exposed roster
-    // is unexpectedly empty, recover snapshots through getPlayer() and the
-    // guaranteed localPlayer reference rather than showing a false zero.
-    if (list.length < Number(room.playerCount || 0)) {
-      const found = new Map(
-        list.filter(Boolean).map(player => [Number(actorNumber(player)), player])
-      );
-
-      if (client?.localPlayer) {
-        found.set(Number(actorNumber(client.localPlayer)), client.localPlayer);
-      }
-
-      if (typeof room.getPlayer === 'function') {
-        for (let number = 1; number <= 255; number++) {
-          try {
-            const player = room.getPlayer(number);
-            if (player) found.set(Number(actorNumber(player)), player);
-          } catch {}
-        }
-      }
-
-      list = Array.from(found.values()).filter(Boolean);
+    // Include the local snapshot if a particular SDK build omits it.
+    const local = client?.localPlayer;
+    if (local && !list.some(p => Number(actorNumber(p)) === Number(actorNumber(local)))) {
+      list.unshift(local);
     }
 
-    return list;
+    // Inactive players have disconnected and are not currently online.
+    return list.filter(player => player && player.isInactive !== true);
   } catch (error) {
-    log('Could not read room players: ' + error.message);
+    log('Could not read Photon room roster: ' + error.message);
     return client?.localPlayer ? [client.localPlayer] : [];
   }
 }
@@ -802,11 +780,12 @@ function renderPlayers() {
   const list = players();
 
   const serverPlayerCount = Number(client?.room?.playerCount);
-  $('#count').textContent = String(
-    Number.isFinite(serverPlayerCount) && serverPlayerCount >= 0
-      ? serverPlayerCount
-      : list.length
-  );
+  // Prefer the server count, but never show zero when the live roster contains
+  // players (including the local player), or undercount a delayed snapshot.
+  const onlineCount = Number.isFinite(serverPlayerCount) && serverPlayerCount >= 0
+    ? Math.max(serverPlayerCount, list.length)
+    : list.length;
+  $('#count').textContent = String(onlineCount);
   board.replaceChildren();
 
   if (!list.length) {
